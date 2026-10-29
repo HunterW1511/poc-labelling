@@ -226,7 +226,8 @@ def cmd_dataset(a):
     return 0
 
 
-TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar")
+TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
+              "plantilla")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -284,8 +285,82 @@ def _spec(slug):
     return json.loads(ruta.read_text(encoding="utf-8"))
 
 
+PLANTILLA = RAIZ / "motor" / "plantillas" / "spec_plantilla.json"
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _validar_spec(spec, slug):
+    """spec.validar (puro) + reglas del host: slug = carpeta, raiz dentro de mis_imagenes, sin marcas CAMBIAR."""
+    if str(RAIZ / "motor") not in sys.path:
+        sys.path.insert(0, str(RAIZ / "motor"))
+    import spec as specmod
+    e, av = specmod.validar(spec)
+    if isinstance(spec, dict):
+        pr = spec.get("proyecto") if isinstance(spec.get("proyecto"), dict) else {}
+        if pr.get("slug") != slug:
+            e.append(f"proyecto.slug={pr.get('slug')!r}: debe ser {slug!r} (el nombre de la carpeta)")
+        im = spec.get("imagenes") if isinstance(spec.get("imagenes"), dict) else {}
+        raiz = str(im.get("raiz") or f"mis_imagenes/{slug}").strip("/")
+        if raiz.split("/")[0] != "mis_imagenes":
+            e.append(f"imagenes.raiz={raiz!r}: debe estar dentro de mis_imagenes (unico montaje de Label Studio)")
+    n = json.dumps(spec, ensure_ascii=True).count("CAMBIAR")
+    if n:
+        e.append(f"quedan {n} marcas CAMBIAR de la plantilla: completa esos textos (ver motor/plantillas/LEEME_spec.md)")
+    return e, av
+
+
+def cmd_validar(a):
+    ruta = RAIZ / "motor" / "proyectos" / a.slug / "spec.json"
+    if not ruta.exists():
+        raise SystemExit(f"No existe {ruta}: crea una con  python xd.py spec-nueva {a.slug}")
+    try:
+        spec = json.loads(ruta.read_text(encoding="utf-8"))
+    except ValueError as ex:
+        print(f"ERROR: {ruta.name} no es JSON valido: {ex}")
+        return 1
+    e, av = _validar_spec(spec, a.slug)
+    for x in e:
+        print("ERROR:", x)
+    for x in av:
+        print("AVISO:", x)
+    print(f"{a.slug}: {len(e)} errores, {len(av)} avisos")
+    return 1 if e else 0
+
+
+def cmd_spec_nueva(a):
+    if not SLUG_RE.match(a.slug):
+        raise SystemExit(f"slug={a.slug!r}: solo minusculas, digitos, _ o -")
+    ruta = RAIZ / "motor" / "proyectos" / a.slug / "spec.json"
+    if ruta.exists():
+        raise SystemExit(f"Ya existe {ruta}: editala o borrala; spec-nueva no sobrescribe")
+    s = json.loads(PLANTILLA.read_text(encoding="utf-8"))
+    s["proyecto"]["slug"] = a.slug
+    if a.titulo:
+        s["proyecto"]["titulo"] = a.titulo.strip()
+    s["imagenes"] = {"raiz": f"mis_imagenes/{a.slug}"}
+    e, av = _validar_spec(s, a.slug)
+    print(f"spec {'CREADA' if a.aplicar else 'CREARIA'} {ruta} desde {PLANTILLA.name}")
+    print(f"  titulo {s['proyecto']['titulo']!r} | clases {[c['nombre'] for c in s['clases']]} | "
+          f"carpetas {[k['nombre'] for k in s['carpetas']]}")
+    for x in e + av:
+        print("  pendiente:", x)
+    if not a.aplicar:
+        print("SOLO REPORTE: usa --aplicar para crear")
+        return 0
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    ruta.write_text(json.dumps(s, ensure_ascii=True, indent=1) + "\n", encoding="utf-8")
+    print(f"Siguiente: edita {ruta} y revisa con  python xd.py validar {a.slug}")
+    return 0
+
+
 def cmd_crear_proyecto(a):
     spec = _spec(a.slug)
+    e, _ = _validar_spec(spec, a.slug)
+    if e:
+        for x in e:
+            print("ERROR:", x)
+        print(f"NO creo: la spec tiene {len(e)} errores  (python xd.py validar {a.slug})")
+        return 1
     raiz = ((spec.get("imagenes") or {}).get("raiz") or f"mis_imagenes/{a.slug}").strip("/")
     if raiz.split("/")[0] != "mis_imagenes":
         raise SystemExit(f"imagenes.raiz={raiz!r}: debe estar dentro de mis_imagenes (unico montaje de Label Studio)")
@@ -593,6 +668,16 @@ def main():
     p.add_argument("-v", "--verbose", action="store_true", help="salida completa de cada test")
     p.add_argument("--proyecto", type=int, help="test_reglas tambien con el perfil real de ese proyecto")
     p.set_defaults(f=cmd_test)
+
+    p = sub.add_parser("spec-nueva", help="spec desde la plantilla (camino sin asistente); reporte o --aplicar")
+    p.add_argument("slug")
+    p.add_argument("--titulo", default="")
+    p.add_argument("--aplicar", action="store_true")
+    p.set_defaults(f=cmd_spec_nueva)
+
+    p = sub.add_parser("validar", help="valida motor/proyectos/<slug>/spec.json; rc 1 si hay errores")
+    p.add_argument("slug")
+    p.set_defaults(f=cmd_validar)
 
     p = sub.add_parser("crear-proyecto", help="crea carpetas + proyecto desde motor/proyectos/<slug>/spec.json")
     p.add_argument("slug")

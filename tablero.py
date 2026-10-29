@@ -142,8 +142,12 @@ def siguiente(t):
     if a.get("ultimo") == "resultado" and not a.get("aplicada"):
         return _sig("cli", "Revisa el resultado del asistente y aplica la spec",
                     f"python xd.py asistente-importar {s}")
+    if t.get("spec_errores"):
+        return _sig("cli", f"Corrige la spec: {len(t['spec_errores'])} errores (edita spec.json y vuelve a validar)",
+                    f"python xd.py validar {s}")
     if s and not t.get("spec"):
-        return _sig("cli", "Describe el caso por audio o texto", f"python xd.py asistente {s} --audio ARCHIVO")
+        return _sig("cli", "Describe el caso con el asistente, o parte de la plantilla (sin asistente)",
+                    f"python xd.py spec-nueva {s}")
     if not n:
         return _sig("cli", "Proyecto borrado; si lo quieres de nuevo, crealo" if t.get("borrado") else "Crea el proyecto en Label Studio", f"python xd.py crear-proyecto {s}")
     ls, fotos, lo = t.get("ls") or {}, t.get("fotos") or [], t.get("lotes") or {}
@@ -324,7 +328,10 @@ def proyectos():
             n = None
         t = {"slug": slug, "titulo": titulo or slug, "spec": bool(spec), "n": n, "vinculo": vinculo if n else None,
              "protegido": n in PROTEGIDOS, "asistente": _asistente(bz, slug, ruta)}
+        if ruta.exists() and spec is None:
+            t["spec_errores"] = [f"spec.json no es JSON valido: revisalo con  python xd.py validar {slug}"]
         if spec:
+            t["spec_errores"], t["spec_avisos"] = xd._validar_spec(spec, slug)
             t["fotos"], t["error_spec"] = _fotos(spec, slug)
             try:
                 base = xd._raiz(spec, slug)

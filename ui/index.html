@@ -76,7 +76,8 @@ a{color:var(--ac)}
 <div class="dos">
 <div>
 <div class="fila"><label>Slug <input id="aslug" type="text" placeholder="caras"></label>
-<button class="mini" id="acargar">Ver ultimo resultado</button></div>
+<button class="mini" id="acargar">Ver ultimo resultado</button>
+<button class="mini" id="aplantilla">Usar plantilla (sin asistente)</button></div>
 <p class="chico">Graba, sube un audio o escribe el caso. Describe lo que quieres detectar con tus palabras; no dictes la spec.</p>
 <div class="fila"><button id="agrabar">Grabar</button><input id="aarchivo" type="file" accept="audio/*"><span id="arecinfo" class="chico"></span></div>
 <audio id="aaudio" controls style="display:none"></audio>
@@ -328,7 +329,9 @@ function visible(k, a, t, sa) {
   if (a.id === null && k !== sa) return false;
   if (a.id === "archivo") return false;
   if (t.protegido && (a.aplicar || k === "sincronizar")) return false;
-  if (k === "crear-proyecto") return !t.n && t.spec;
+  if (k === "crear-proyecto") return !t.n && t.spec && !(t.spec_errores || []).length;
+  if (k === "validar") return !!t.spec || !!(t.spec_errores || []).length;
+  if (k === "spec-nueva") return !t.spec && !(t.spec_errores || []).length;
   if (k === "borrar-proyecto" || k === "sincronizar") return !!t.n && !!t.slug;
   if (k === "plan") return t.spec;
   if (k === "capturar") return !!t.spec && !t.protegido;
@@ -363,6 +366,8 @@ function tarjeta(t) {
     " | predicciones " + (ls.total_predictions_number ?? "?") + " | version " + esc(ls.model_version || "-") +
     ' | <a href="' + esc(LS_URL) + "/projects/" + t.n + '/" target="_blank" rel="noopener">abrir en Label Studio</a></p>';
   if (t.error_spec) h += '<p class="avisos">' + esc(t.error_spec) + "</p>";
+  if ((t.spec_errores || []).length) h += '<p class="avisos"><b>Spec con errores (no se puede crear):</b><br>' + t.spec_errores.map(esc).join("<br>") + "</p>";
+  if ((t.spec_avisos || []).length) h += '<p class="chico">Avisos de la spec: ' + t.spec_avisos.map(esc).join(" | ") + "</p>";
   if (t.fotos) h += '<div class="tablas"><table><tr><th>Carpeta</th><th>Tipo</th><th class="n">Plan completo</th><th class="n">Tienes</th></tr>' +
     t.fotos.map(f => "<tr><td>" + esc(f.carpeta) + "</td><td>" + esc(f.tipo) + '</td><td class="n">' + f.recom + '</td><td class="n">' + f.tienes + "</td></tr>").join("") +
     "</table></div>";
@@ -433,6 +438,13 @@ $("#aarchivo").onchange = e => {
 };
 $("#aenviar").onclick = () => enviarAsistente(false);
 $("#acargar").onclick = cargarAsistente;
+$("#aplantilla").onclick = () => {
+  const slug = $("#aslug").value.trim();
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(slug)) { alert("Escribe un slug: minusculas, digitos, _ o -"); return; }
+  const titulo = prompt("Titulo del proyecto (puedes cambiarlo luego en spec.json)", slug);
+  if (titulo === null) return;
+  correrAccion({accion: "spec-nueva", slug: slug, n: null, opciones: {"--titulo": titulo}}, false);
+};
 $("#confsi").onclick = () => { if (PENDIENTE) correrAccion(PENDIENTE, true); };
 $("#confno").onclick = () => { PENDIENTE = null; ocultarConfirmar(); };
 $("#cancelar").onclick = async () => { await api("/api/cancelar", {}); sondear(); };

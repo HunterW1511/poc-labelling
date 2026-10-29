@@ -21,9 +21,12 @@ VALOR = re.compile(r"^[A-Za-z0-9_.,:@=/-]{1,200}$")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 VOCAB = re.compile(r"^[^\x00-\x1f\"]{1,300}$")
 MODELO = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
+TEXTO = re.compile(r"^[^\x00-\x1f\"]{1,120}$")               # titulos: admite espacios (sin shell: lista de args)
 # id = "slug" | "n" | "archivo" | None; aplicar = tiene modo reporte (se confirma con --aplicar);
 # script = otro programa del host (por defecto xd.py); ventana = abre una ventana de OpenCV en el escritorio
 ACCIONES = {
+    "spec-nueva": {"id": "slug", "aplicar": True, "titulo": "Spec desde plantilla", "opciones": {"--titulo": "texto"}},
+    "validar": {"id": "slug", "titulo": "Validar spec"},
     "crear-proyecto": {"id": "slug", "aplicar": True, "titulo": "Crear proyecto"},
     "capturar": {"id": "slug", "script": "capturar.py", "ventana": True, "titulo": "Capturar fotos",
                  "opciones": {"--total": "int", "--carpeta": "str", "--camara": "int"}},
@@ -150,6 +153,8 @@ def armar(d):
             raise ValueError(f"{k}={v!r}: debe ser {tipo}")
         if tipo == "str" and not VALOR.match(v):
             raise ValueError(f"{k}={v!r}: caracteres no permitidos")
+        if tipo == "texto" and not TEXTO.match(v):
+            raise ValueError(f"{k}: texto de una linea, sin comillas, hasta 120 caracteres")
         args += [k, v]
     aplicar = bool(d.get("aplicar"))
     if aplicar and not a.get("aplicar"):
@@ -161,6 +166,10 @@ def armar(d):
                       if l["sin_importar"] and p in tablero.PROTEGIDOS)
         if prot:
             raise PermissionError(f"hay predicciones sin importar de proyectos protegidos {prot}: archivalas en Drive")
+    if nombre == "crear-proyecto":                     # defensa en el servidor: nunca crear con spec invalida
+        e, _ = tablero.xd._validar_spec(tablero._json(tablero.PROYECTOS / args[0] / "spec.json"), args[0])
+        if e:
+            raise ValueError(f"la spec de {args[0]} tiene {len(e)} errores; corrigela antes de crear: {e[0]}")
     if aplicar:
         if not T.fue_ok(nombre, args):
             raise PermissionError("primero corre el reporte con las mismas opciones y que termine OK")

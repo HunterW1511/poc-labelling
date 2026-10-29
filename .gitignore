@@ -52,3 +52,6 @@ _compartir/
 *.ogg
 *.mp4
 *.csv
+
+# Spike L.8 (solo medir)
+motor/_l8/

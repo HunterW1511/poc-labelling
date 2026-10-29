@@ -1,0 +1,22 @@
+{
+ "esquema": 1,
+ "proyecto": {"titulo": "CAMBIAR: titulo del proyecto", "slug": "plantilla",
+              "descripcion": "CAMBIAR: que se ve en la foto (objetos, fondo, luz, distancia de la camara)"},
+ "tipo": "poligonos",
+ "imgsz": 644,
+ "negativos": ["shadow"],
+ "clases": [
+  {"nombre": "Pieza_A", "prompts": ["red plastic part"], "max_por_imagen": 1, "importancia": "media",
+   "clic": "grande", "descripcion": "CAMBIAR: como se ve la pieza A (color, forma, tamano)"},
+  {"nombre": "Pieza_B", "prompts": ["small metal screw"], "max_por_imagen": 10, "area_min": 0.0002,
+   "importancia": "alta", "clic": "chico", "descripcion": "CAMBIAR: como se ve la pieza B"}
+ ],
+ "carpetas": [
+  {"nombre": "Pieza_A", "tipo": "pieza", "clases": ["Pieza_A"]},
+  {"nombre": "Pieza_B", "tipo": "pieza", "clases": ["Pieza_B"]},
+  {"nombre": "Mezcla", "tipo": "mezcla", "clases": ["Pieza_A", "Pieza_B"]},
+  {"nombre": "Fondo", "tipo": "negativo", "clases": []}
+ ],
+ "imagenes": {"raiz": "mis_imagenes/plantilla"},
+ "motor": {"url": "http://motor:9090", "interactivo": true}
+}
