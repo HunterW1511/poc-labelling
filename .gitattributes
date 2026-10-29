@@ -1,0 +1,4 @@
+# Fin de linea: LF para todo (corre en contenedor Linux y en el hub del piloto)
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.pdf binary
