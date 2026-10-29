@@ -1,0 +1,54 @@
+# --- Secretos ---
+.env
+
+# --- Datos personales y de proyectos (nunca a Git) ---
+mis_imagenes/*
+!mis_imagenes/.gitkeep
+ui/audios/
+ui/textos/
+motor/proyectos/
+motor/lotes/
+motor/datasets/
+motor/modelos/
+motor/diagnosticos/
+
+# --- Modelos, pesos y exportaciones ---
+*.pt
+*.onnx
+*_openvino_model/
+weights/
+runs/
+
+# --- Archivos sueltos y respaldos ---
+*.zip
+*.zip_viejo
+*.bak
+_archivo/
+
+# --- Python y herramientas ---
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+*.log
+
+# --- Salidas locales y carpeta para compartir en chats ---
+capturas/
+preetiquetas/
+motor/correcciones/
+_compartir/
+
+# --- Red de seguridad: ninguna imagen, audio ni tabla de datos en Git ---
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+*.webm
+*.m4a
+*.mp3
+*.wav
+*.ogg
+*.mp4
+*.csv

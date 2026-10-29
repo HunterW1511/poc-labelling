@@ -1,0 +1,17 @@
+# Override GPU NVIDIA. Activar con COMPOSE_FILE en .env (ver .env.example).
+# Requiere driver NVIDIA + NVIDIA Container Toolkit (Linux) o Docker Desktop con GPU (Windows/WSL2).
+# TORCH_INDEX_GPU: verificar en https://download.pytorch.org/whl/ que exista torch 2.14.1 para ese cuXXX.
+services:
+  motor:
+    image: poc-labelling-motor-gpu
+    build:
+      context: ./motor
+      args:
+        TORCH_INDEX: ${TORCH_INDEX_GPU:-https://download.pytorch.org/whl/cu130}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

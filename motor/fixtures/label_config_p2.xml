@@ -1,0 +1,18 @@
+<View>
+  <Image name="image" value="$image" zoom="true"/>
+  <PolygonLabels name="label" toName="image" strokeWidth="2" opacity="0.4"
+                 imgsz="644" negativos="shadow" contencion="0.6">
+    <Label value="Tornillos" prompts="screw;small metal screw" area_min="0.0002" max="10" clic="chico"/>
+    <Label value="Base" background="#212121" prompts="black plastic part" area_min="0.01" max="1"/>
+    <Label value="Soportes" background="#1E88E5" prompts="blue plastic part" area_min="0.008" max="1"/>
+    <Label value="Eje_Externo" background="#FDD835" prompts="yellow plastic part" contencion="1.01" area_min="0.0015" max="1" clic="grande" area_max="0.02"/>
+    <Label value="Eje_Interno" background="#F9A825" prompts="yellow plastic part" contencion="1.01" area_min="0.0015" max="1" clic="chico"/>
+    <Label value="Cabeza" background="#43A047" prompts="green plastic part"/>
+    <Label value="Debajo" background="#E53935" prompts="red plastic part"/>
+  </PolygonLabels>
+  <KeyPointLabels name="clic" toName="image" smart="true">
+  <Label value="Base"/><Label value="Cabeza"/><Label value="Debajo"/>
+  <Label value="Eje_Externo"/><Label value="Eje_Interno"/>
+  <Label value="Soportes"/><Label value="Tornillos"/>
+  </KeyPointLabels>
+</View>

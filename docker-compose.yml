@@ -1,0 +1,88 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ls_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  label-studio:
+    image: "heartexlabs/label-studio:1.23.0"
+    container_name: label_studio
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DJANGO_DB: default
+      POSTGRE_NAME: ${POSTGRES_DB}
+      POSTGRE_USER: ${POSTGRES_USER}
+      POSTGRE_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRE_HOST: db
+      POSTGRE_PORT: 5432
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/files
+      LABEL_STUDIO_USERNAME: ${LS_ADMIN_EMAIL}
+      LABEL_STUDIO_PASSWORD: ${LS_ADMIN_PASSWORD}
+      LABEL_STUDIO_USER_TOKEN: ${LS_API_TOKEN}
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      ML_BLOCK_LOCAL_IP: "false"
+      USE_DEFAULT_BANNED_SUBNETS: "false"
+      USER_ADDITIONAL_BANNED_SUBNETS: "0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,192.168.0.0/16,::1/128,fc00::/7,fe80::/10"
+    volumes:
+      - ls_data:/label-studio/data
+      - ./mis_imagenes:/label-studio/files/mis_imagenes:ro
+
+  motor:
+    build: ./motor
+    container_name: ls_motor
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    depends_on:
+      label-studio:
+        condition: service_healthy
+    ports:
+      - "9090:9090"
+    environment:
+      LABEL_STUDIO_URL: http://label-studio:8080
+      LABEL_STUDIO_API_KEY: ${LS_API_TOKEN}
+      MODEL_DIR: /data
+      SAM3_MODEL: /data/sam3.pt
+      YOLO_CONFIG_DIR: /data
+      MOTOR_DEVICE: ${MOTOR_DEVICE:-auto}
+      MOTOR_PREVIAS: ${MOTOR_PREVIAS:-6}
+      MOTOR_CACHE_MAX: ${MOTOR_CACHE_MAX:-8}
+    volumes:
+      - motor_data:/data
+      - ./sam3.pt:/models/sam3.pt:ro
+      - ./motor:/app
+
+volumes:
+  pg_data:
+  ls_data:
+  motor_data:
+
+
+

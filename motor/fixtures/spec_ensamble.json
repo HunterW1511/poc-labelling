@@ -1,0 +1,38 @@
+{
+ "esquema": 1,
+ "proyecto": {"titulo": "Ensamble automotriz", "slug": "ensamble",
+              "descripcion": "Piezas impresas en 3D sobre fondo blanco. Proyecto 2 (Prueba Motor)."},
+ "tipo": "poligonos",
+ "imgsz": 644,
+ "negativos": ["shadow"],
+ "ajustes": {"contencion": 0.6},
+ "clases": [
+  {"nombre": "Tornillos", "prompts": ["screw", "small metal screw"], "area_min": 0.0002, "max_por_imagen": 10,
+   "clic": "chico", "importancia": "alta",
+   "descripcion": "Plastico; solo se ve la cabeza: circulos grises sobre la Base, maximo 10 posiciones"},
+  {"nombre": "Base", "prompts": ["black plastic part"], "area_min": 0.01, "max_por_imagen": 1, "color": "negro"},
+  {"nombre": "Soportes", "prompts": ["blue plastic part"], "area_min": 0.008, "max_por_imagen": 1, "color": "azul"},
+  {"nombre": "Eje_Externo", "prompts": ["yellow plastic part"], "contencion": 1.01, "area_min": 0.0015,
+   "max_por_imagen": 1, "clic": "grande", "area_max": 0.02, "color": "amarillo"},
+  {"nombre": "Eje_Interno", "prompts": ["yellow plastic part"], "contencion": 1.01, "area_min": 0.0015,
+   "max_por_imagen": 1, "clic": "chico", "color": "#F9A825",
+   "descripcion": "Unido al externo por una articulacion que el soporte tapa: en la foto se ven separados"},
+  {"nombre": "Cabeza", "prompts": ["green plastic part"], "color": "verde"},
+  {"nombre": "Debajo", "prompts": ["red plastic part"], "color": "rojo"}
+ ],
+ "carpetas": [
+  {"nombre": "Base", "tipo": "pieza", "clases": ["Base"]},
+  {"nombre": "Cabeza", "tipo": "pieza", "clases": ["Cabeza"]},
+  {"nombre": "Debajo", "tipo": "pieza", "clases": ["Debajo"]},
+  {"nombre": "Eje_Externo", "tipo": "pieza", "clases": ["Eje_Externo"]},
+  {"nombre": "Eje_Interno", "tipo": "pieza", "clases": ["Eje_Interno"]},
+  {"nombre": "Soportes", "tipo": "pieza", "clases": ["Soportes"]},
+  {"nombre": "Tornillos", "tipo": "pieza", "clases": ["Tornillos"]},
+  {"nombre": "Ensamble", "tipo": "mezcla",
+   "clases": ["Tornillos", "Base", "Soportes", "Eje_Externo", "Eje_Interno", "Cabeza", "Debajo"]},
+  {"nombre": "Fondo", "tipo": "negativo", "clases": []}
+ ],
+ "imagenes": {"raiz": "mis_imagenes"},
+ "motor": {"url": "http://motor:9090", "interactivo": true}
+}
+

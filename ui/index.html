@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoC-Labelling</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1d2330;--sub:#5b6474;--bd:#d9dde4;--ac:#1f6feb;--ok:#1a7f37;--err:#cf222e;--con:#0f1420;--contx:#d6dde8;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0f131a;--card:#171c25;--tx:#e6e9ef;--sub:#9aa3b2;--bd:#2a3140;--ac:#4c8dff;--ok:#3fb950;--err:#f85149;--con:#0a0d12;--contx:#c9d1d9;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--tx)}
+header{padding:14px 20px;border-bottom:1px solid var(--bd);background:var(--card)}
+h1{margin:0;font-size:18px}
+main{max-width:1200px;margin:0 auto;padding:16px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px}
+.card h2{margin:0 0 10px;font-size:15px}
+.card h3{margin:12px 0 4px;font-size:13px}
+.fila{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{font:inherit;padding:7px 14px;border-radius:7px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer}
+button.pri{background:var(--ac);border-color:var(--ac);color:#fff}
+button.mini{padding:3px 10px;font-size:12px}
+button:disabled{opacity:.5;cursor:default}
+input,select,textarea{font:inherit;padding:5px;border-radius:7px;border:1px solid var(--bd);background:var(--bg);color:var(--tx)}
+input[type=number]{width:80px}
+input[type=text]{width:150px}
+textarea{width:100%;min-height:70px;resize:vertical}
+#estado{font-size:13px;color:var(--sub);margin:0 0 8px}
+#estado.ok{color:var(--ok)}
+#estado.err{color:var(--err)}
+pre{margin:0;background:var(--con);color:var(--contx);padding:12px;border-radius:8px;min-height:160px;max-height:60vh;overflow:auto;white-space:pre-wrap;font:13px/1.45 Consolas,monospace}
+pre.mini{min-height:0;max-height:none;font-size:11px;padding:6px;white-space:pre}
+#servicios{font-size:13px;margin:10px 0 0;color:var(--sub)}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr))}
+.dos{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))}
+.pro{border:1px solid var(--bd);border-radius:10px;padding:12px;background:var(--bg)}
+.pro h3{margin:0 0 4px;font-size:15px}
+.meta{font-size:12px;color:var(--sub);margin:0 0 6px}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;border:1px solid var(--bd);margin-right:4px}
+.badge.prot{border-color:var(--err);color:var(--err)}
+.sig{border-left:3px solid var(--ac);padding:6px 10px;margin:8px 0;background:var(--bg);font-size:13px}
+.sig code{display:block;margin-top:4px;font:12px Consolas,monospace;color:var(--sub)}
+.acc{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.form{margin-top:8px;padding:8px;border:1px dashed var(--bd);border-radius:8px;font-size:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.conf{display:none;border-left:3px solid var(--ok);padding:8px 10px;margin:0 0 8px;background:var(--bg);font-size:13px}
+.tablas{overflow-x:auto}
+table{border-collapse:collapse;font-size:12px;width:100%}
+td,th{padding:2px 6px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
+td.n,th.n{text-align:right}
+.chico{font-size:12px;color:var(--sub);margin:4px 0}
+.avisos{color:var(--err);font-size:12px;margin:0 0 8px}
+ul{margin:4px 0;padding-left:20px;font-size:13px}
+audio{width:100%;margin-top:6px}
+a{color:var(--ac)}
+</style>
+</head>
+<body>
+<header><h1>PoC-Labelling</h1></header>
+<main>
+<section class="card">
+<h2>Servicios</h2>
+<div class="fila">
+<button class="pri" data-cmd="estado">Estado</button>
+<label>Proyecto <input id="proy" type="number" min="1" value="2"></label>
+<button data-cmd="precalentar">Precalentar SAM 3</button>
+<button data-cmd="reiniciar-motor">Reiniciar motor y precalentar</button>
+<button id="cancelar" disabled>Cancelar</button>
+</div>
+<p id="servicios">Cargando servicios...</p>
+</section>
+<section class="card" id="externos">
+<div class="fila" style="justify-content:space-between"><h2>Pasos externos (<span id="ejecutor">colab</span>)</h2><button id="xact">Actualizar</button></div>
+<div id="xavisos" class="avisos"></div>
+<div id="xlista"><p class="chico">Cargando...</p></div>
+</section><section class="card" id="asistente">
+<h2>Asistente: describir el caso</h2>
+<div class="dos">
+<div>
+<div class="fila"><label>Slug <input id="aslug" type="text" placeholder="caras"></label>
+<button class="mini" id="acargar">Ver ultimo resultado</button></div>
+<p class="chico">Graba, sube un audio o escribe el caso. Describe lo que quieres detectar con tus palabras; no dictes la spec.</p>
+<div class="fila"><button id="agrabar">Grabar</button><input id="aarchivo" type="file" accept="audio/*"><span id="arecinfo" class="chico"></span></div>
+<audio id="aaudio" controls style="display:none"></audio>
+<h3>Texto (opcional si hay audio)</h3>
+<textarea id="atexto" placeholder="Quiero detectar..."></textarea>
+<div class="fila" style="margin-top:6px">
+<label class="chico">Vocabulario <input id="avoc" type="text" placeholder="Nombre1,Nombre2"></label>
+<label class="chico">Modelo <input id="amodelo" type="text" placeholder="qwen2.5:14b"></label>
+<label class="chico"><input id="anuevo" type="checkbox"> --nuevo (sin spec previa)</label>
+</div>
+<div class="fila" style="margin-top:8px"><button class="pri" id="aenviar">Enviar a Colab</button></div>
+</div>
+<div id="ares"><p class="chico">Escribe un slug y pulsa "Ver ultimo resultado".</p></div>
+</div>
+</section>
+<section class="card">
+<div class="fila" style="justify-content:space-between"><h2>Proyectos</h2>
+<span class="fila"><label class="chico"><input type="checkbox" id="todos"> Mostrar protegidos y borrados</label><button id="actualizar">Actualizar</button></span></div>
+<div id="avisos" class="avisos"></div>
+<div id="proyectos" class="grid"></div>
+</section>
+<section class="card">
+<h2>Salida</h2>
+<div id="confirmar" class="conf"><span id="conftxt"></span>
+<div class="fila" style="margin-top:6px"><button class="mini pri" id="confsi">Confirmar (--aplicar)</button><button class="mini" id="confno">Descartar</button></div></div>
+<p id="estado">Sin trabajos.</p>
+<pre id="salida"></pre>
+</section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+let timer = null, VISTO = 0, LS_URL = "http://127.0.0.1:8080";
+let ACC = {}, ULTIMO = [], TARJ = {}, ABIERTA = null, PENDIENTE = null;
+let REC = null, BLOB = null, EXT = "", T0 = 0, TREC = null, APOLL = null, ADET = null;
+const DEFECTOS = {"preetiquetar": {"--muestra": "30", "--modo": "auto"}, "registrar": {"--run": "ultimo", "--activar": true},
+  "dataset": {"--formato": "det", "--drive": true}, "lote-importar": {"--fijar-version": true}};
+async function api(ruta, datos) {
+  const op = datos === undefined ? {headers: {"X-XD": "1"}} :
+    {method: "POST", headers: {"Content-Type": "application/json", "X-XD": "1"}, body: JSON.stringify(datos)};
+  const r = await fetch(ruta, op);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+}
+function limpiar(t) {
+  return t.split("\n").map(l => { const p = l.split("\r").filter(s => s.trim()); return p.length ? p[p.length - 1] : ""; }).join("\n");
+}
+function sigAccion(cmd) {
+  const tk = (cmd || "").split(/\s+/);
+  return tk[1] === "xd.py" ? tk[2] : tk[1] === "capturar.py" ? "capturar" : null;
+}
+function opcionesDe(cmd) {
+  const tk = (cmd || "").split(/\s+/).slice(3), o = {};
+  for (let i = 0; i < tk.length; i++) {
+    if (!tk[i].startsWith("--")) continue;
+    const v = tk[i + 1];
+    if (v && !v.startsWith("--")) { o[tk[i]] = v; i++; } else o[tk[i]] = true;
+  }
+  return o;
+}
+function lista(xs) {
+  return xs && xs.length ? "<ul>" + xs.map(x => "<li>" + esc(typeof x === "string" ? x : JSON.stringify(x)) + "</li>").join("") + "</ul>" : '<p class="chico">-</p>';
+}
+function tabla(cab, filas) {
+  return '<div class="tablas"><table><tr>' + cab.map(c => "<th>" + esc(c) + "</th>").join("") + "</tr>" +
+    filas.map(f => "<tr>" + f.map(x => "<td>" + esc(x) + "</td>").join("") + "</tr>").join("") + "</table></div>";
+}
+function pintar(t) {
+  const pre = $("#salida"), abajo = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+  pre.textContent = limpiar(t.salida || "");
+  if (abajo) pre.scrollTop = pre.scrollHeight;
+  const e = $("#estado");
+  if (!t.id) { e.textContent = "Sin trabajos."; e.className = ""; }
+  else if (t.corriendo) { e.textContent = "Corriendo: " + t.cmd + " (" + t.seg + " s)"; e.className = ""; }
+  else { e.textContent = (t.rc === 0 ? "Termino OK" : "Termino con codigo " + t.rc) + ": " + t.cmd + " (" + t.seg + " s)"; e.className = t.rc === 0 ? "ok" : "err"; }
+  document.querySelectorAll("button[data-cmd], #proyectos button, #confsi, #aenviar, #ares button, #xlista button").forEach(b => b.disabled = !!t.corriendo);
+  $("#cancelar").disabled = !t.corriendo;
+}
+function mostrarConfirmar(t) {
+  if (t.rc === 0) {
+    $("#conftxt").textContent = "Reporte OK. Si es correcto, confirma para escribir: " + t.cmd + " --aplicar";
+    $("#confirmar").style.display = "block";
+  } else { PENDIENTE = null; }
+}
+function ocultarConfirmar() { $("#confirmar").style.display = "none"; }
+async function sondear() {
+  clearTimeout(timer);
+  try {
+    const t = await api("/api/trabajo");
+    pintar(t);
+    if (!t.corriendo && t.id && t.id !== VISTO) {
+      const primera = VISTO === 0 && !PENDIENTE;
+      VISTO = t.id;
+      if (!primera) { cargarServicios(); cargarProyectos(); cargarExternos(); if ($("#aslug").value.trim()) cargarAsistente(); }
+      if (PENDIENTE && PENDIENTE.id === t.id) mostrarConfirmar(t);
+    }
+    if (t.corriendo) timer = setTimeout(sondear, 700);
+  } catch (e) { $("#estado").textContent = "UI sin respuesta: " + e.message; $("#estado").className = "err"; }
+}
+async function ejecutar(cmd, args) {
+  PENDIENTE = null; ocultarConfirmar();
+  try { await api("/api/ejecutar", {cmd, args}); } catch (e) { alert(e.message); }
+  sondear();
+}
+async function correrAccion(ab, aplicar) {
+  const a = ACC[ab.accion];
+  if (!aplicar && ab.accion === "lote-importar" && !confirm("lote-importar escribe en Label Studio sin modo reporte. Continuar?")) return;
+  if (aplicar && ab.accion === "borrar-proyecto" && !confirm("Se borra el proyecto " + ab.slug + " en Label Studio. Seguro?")) return;
+  ocultarConfirmar();
+  try {
+    const r = await api("/api/accion", {accion: ab.accion, slug: ab.slug, n: ab.n, archivo: ab.archivo, opciones: ab.opciones, aplicar: aplicar});
+    PENDIENTE = (!aplicar && a.aplicar) ? Object.assign(JSON.parse(JSON.stringify(ab)), {id: r.id}) : null;
+    if (aplicar) ABIERTA = null;
+  } catch (e) { PENDIENTE = null; alert(e.message); }
+  sondear();
+}
+async function cargarServicios() {
+  try {
+    const s = await api("/api/servicios"), e = s.estado || {};
+    LS_URL = s.ls_url || LS_URL;
+    const up = e.uptime_s ? (e.uptime_s / 3600).toFixed(1) + " h" : "-";
+    $("#servicios").innerHTML = "Label Studio: <b>" + (s.label_studio ? "UP" : "NO RESPONDE") + "</b> | Motor: <b>" +
+      (s.motor ? "UP" : "NO RESPONDE") + "</b> | SAM 3 listo: <b>" + (e.listo ? "si" : "no") + "</b> | motor encendido: " + up +
+      (e.uptime_s > 86400 ? " (si precalentar tarda mas de ~250 s, usa Reiniciar motor)" : "");
+  } catch (err) { $("#servicios").textContent = "Error: " + err.message; }
+}
+// ---------------------------------------------------------------- asistente (E.4)
+async function grabar() {
+  if (REC) { REC.stop(); return; }
+  let st;
+  try { st = await navigator.mediaDevices.getUserMedia({audio: true}); }
+  catch (e) { alert("Sin acceso al microfono: " + e.message); return; }
+  const tipos = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  const tipo = tipos.find(x => window.MediaRecorder && MediaRecorder.isTypeSupported(x)) || "";
+  const partes = [];
+  REC = new MediaRecorder(st, tipo ? {mimeType: tipo} : {});
+  REC.ondataavailable = e => { if (e.data.size) partes.push(e.data); };
+  REC.onstop = () => {
+    st.getTracks().forEach(t => t.stop());
+    const mt = REC.mimeType || tipo;
+    EXT = mt.includes("ogg") ? ".ogg" : mt.includes("mp4") ? ".mp4" : ".webm";
+    BLOB = new Blob(partes, {type: mt});
+    $("#aaudio").src = URL.createObjectURL(BLOB); $("#aaudio").style.display = "block";
+    $("#agrabar").textContent = "Grabar"; clearInterval(TREC); REC = null;
+    $("#arecinfo").textContent = "Grabacion lista (" + Math.round((Date.now() - T0) / 1000) + " s). Escuchala antes de enviar.";
+    $("#aarchivo").value = "";
+  };
+  REC.start(); T0 = Date.now(); $("#agrabar").textContent = "Detener";
+  TREC = setInterval(() => { $("#arecinfo").textContent = "Grabando... " + Math.round((Date.now() - T0) / 1000) + " s"; }, 500);
+}
+function slugAsistente() {
+  const s = $("#aslug").value.trim().toLowerCase().replace(/\s+/g, "-"); $("#aslug").value = s;
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(s)) { alert(s ? "Slug " + s + " invalido: solo minusculas, digitos, _ o - (ej. zz-voz)" : "Escribe el slug en el campo Slug, arriba (ej. zz-voz)"); $("#aslug").focus(); $("#aslug").scrollIntoView({behavior: "smooth", block: "center"}); return null; }
+  return s;
+}
+async function enviarAsistente(continuar) {
+  const slug = slugAsistente();
+  if (!slug) return;
+  const d = {slug: slug, vocabulario: $("#avoc").value, modelo: $("#amodelo").value, nuevo: $("#anuevo").checked, continuar: !!continuar};
+  if (continuar) d.respuestas = ($("#aresp") || {}).value || "";
+  else d.texto = $("#atexto").value;
+  try {
+    if (!continuar && BLOB) {
+      const r = await fetch("/api/audio", {method: "POST", headers: {"X-XD": "1", "X-Slug": slug, "X-Ext": EXT}, body: BLOB});
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.status);
+      d.audio = j.audio;
+    }
+    await api("/api/asistente", d);
+  } catch (e) { alert(e.message); return; }
+  PENDIENTE = null; ocultarConfirmar();
+  sondear();
+}
+async function cargarAsistente() {
+  clearTimeout(APOLL);
+  const slug = $("#aslug").value.trim();
+  if (!slug) return;
+  let d;
+  try { d = await api("/api/asistente?slug=" + encodeURIComponent(slug)); }
+  catch (e) { $("#ares").innerHTML = '<p class="avisos">' + esc(e.message) + "</p>"; return; }
+  ADET = d;
+  const st = d.estado || {}, r = d.resultado;
+  let h = "";
+  if (d.error) h += '<p class="avisos">' + esc(d.error) + "</p>";
+  if (st.ultimo === "pendiente") h += '<div class="sig">Esperando a Colab: abre asistente.ipynb y corre la celda 2 (la 1 si la sesion es nueva). Esta vista se revisa sola cada 15 s.</div>';
+  if (st.ultimo === "error") h += '<div class="sig">El ultimo trabajo fallo en Colab. Para reintentar, borra su _error.txt en Drive y corre otra vez la celda 2.</div><pre class="mini">' + esc(d.error_colab || "") + "</pre>";
+  if (!r && !st.ultimo) h += '<p class="chico">Sin trabajos del asistente para ' + esc(slug) + ".</p>";
+  if (r) {
+    h += '<p class="chico">Resultado ' + esc(r.trabajo) + " | stt " + esc(r.stt || "no") + " | llm " + esc(r.llm_seg) + " s" +
+      (st.ultimo === "pendiente" ? " | hay uno mas nuevo en Colab" : "") + "</p>";
+    h += "<h3>Transcripcion</h3><p class=\"chico\">" + esc(r.transcripcion || "-") + "</p>";
+    const errs = (d.errores || []).concat(r.problemas || []);
+    if (errs.length) h += '<h3>No se puede aplicar</h3><div class="avisos">' + lista(errs) + "</div>";
+    h += "<h3>Preguntas del asistente</h3>" + lista(r.preguntas);
+    h += "<h3>Supuestos</h3>" + lista(r.supuestos);
+    const av = (r.avisos || []).concat(d.avisos_spec || []);
+    if (av.length) h += "<h3>Avisos</h3>" + lista(av);
+    if (d.clases) h += "<h3>Clases</h3>" + tabla(["Clase", "Prompts", "Max", "Importancia"],
+      d.clases.map(c => [c.nombre, (c.prompts || []).join(", "), c.max == null ? "-" : c.max, c.importancia || "-"]));
+    if (d.carpetas) h += "<h3>Carpetas (" + esc(d.raiz || "") + ")</h3>" + tabla(["Carpeta", "Tipo", "Clases"],
+      d.carpetas.map(k => [k.nombre, k.tipo, (k.clases || []).join(", ")]));
+    if (d.plan) h += "<h3>Plan de captura</h3>" + tabla(["Carpeta", "Tipo", "Fotos", "Motivo"], d.plan.map(f => [f.carpeta, f.tipo, f.fotos, f.motivo]));
+    h += "<h3>Respuestas o correcciones</h3><textarea id=\"aresp\" placeholder=\"Contesta las preguntas describiendo el caso\"></textarea>" +
+      '<div class="fila" style="margin-top:6px"><button class="mini" id="acont">Enviar respuestas (--continuar)</button>' +
+      '<button class="mini pri" id="aaplicar"' + (errs.length ? " disabled" : "") + ">Revisar y aplicar spec</button></div>" +
+      (d.spec_existe ? '<p class="chico">Ya existe una spec para este slug: se reemplaza con respaldo .bak (--forzar).</p>' : "");
+  }
+  $("#ares").innerHTML = h;
+  if ($("#acont")) $("#acont").onclick = () => enviarAsistente(true);
+  if ($("#aaplicar")) $("#aaplicar").onclick = () => correrAccion({accion: "asistente-importar", slug: slug, n: null,
+    opciones: {"--forzar": !!ADET.spec_existe}}, false);
+  if (st.ultimo === "pendiente") APOLL = setTimeout(cargarAsistente, 15000);
+}
+// ---------------------------------------------------------------- pasos externos (E.5)
+let XPOLL = null, XITEMS = [];
+const XEST = {"en_espera": "En espera", "listo": "Listo", "error": "Error"};
+async function cargarExternos() {
+  clearTimeout(XPOLL);
+  let d;
+  try { d = await api("/api/externos"); } catch (e) { $("#xlista").innerHTML = '<p class="avisos">' + esc(e.message) + "</p>"; return; }
+  $("#ejecutor").textContent = d.ejecutor;
+  $("#xavisos").innerHTML = (d.avisos || []).map(esc).join("<br>");
+  XITEMS = d.items || [];
+  if (!XITEMS.length) { $("#xlista").innerHTML = '<p class="chico">Nada pendiente en ' + esc(d.ejecutor) + ".</p>"; return; }
+  $("#xlista").innerHTML = XITEMS.map((x, i) => '<div class="sig"><b>' + esc(XEST[x.estado] || x.estado) + "</b> | " + esc(x.tipo) +
+    (x.n ? " | proyecto " + x.n : "") + (x.slug ? " | " + esc(x.slug) : "") + "<code>" + esc(x.archivo) + "</code>" +
+    '<div class="chico">' + esc(x.texto) + '</div><div class="acc">' +
+    (x.accion && !x.protegido ? '<button class="mini pri" data-xi="' + i + '">' + esc((ACC[x.accion.accion] || {}).titulo || x.accion.accion) + "</button>" : "") +
+    (x.slug && x.tipo === "asistente" ? '<button class="mini" data-xasist="' + esc(x.slug) + '">Ver en asistente</button>' : "") +
+    (x.archivable ? '<button class="mini" data-xarch="' + esc(x.archivo) + '">Archivar</button>' : "") +
+    "</div></div>").join("");
+  if (XITEMS.some(x => x.estado === "en_espera")) XPOLL = setTimeout(cargarExternos, 20000);
+}
+$("#xlista").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.xi) correrAccion(Object.assign({slug: null, n: null}, XITEMS[+b.dataset.xi].accion), false);
+  else if (b.dataset.xasist) { $("#aslug").value = b.dataset.xasist; cargarAsistente(); $("#asistente").scrollIntoView({behavior: "smooth"}); }
+  else if (b.dataset.xarch) correrAccion({accion: "archivar", archivo: b.dataset.xarch, slug: null, n: null, opciones: {}}, false);
+};
+$("#xact").onclick = cargarExternos;
+// ---------------------------------------------------------------- tablero (E.2, E.3)
+function visible(k, a, t, sa) {
+  if (a.id === "slug" && !t.slug) return false;
+  if (a.id === "n" && !t.n) return false;
+  if (a.id === null && k !== sa) return false;
+  if (a.id === "archivo") return false;
+  if (t.protegido && (a.aplicar || k === "sincronizar")) return false;
+  if (k === "crear-proyecto") return !t.n && t.spec;
+  if (k === "borrar-proyecto" || k === "sincronizar") return !!t.n && !!t.slug;
+  if (k === "plan") return t.spec;
+  if (k === "capturar") return !!t.spec && !t.protegido;
+  if (k === "ver") return !!(t.modelos && t.modelos.n);
+  if (k === "asistente-importar") return !!t.asistente;
+  return true;
+}
+function formulario(ab) {
+  const a = ACC[ab.accion], o = ab.opciones || {};
+  let h = '<div class="form"><b>' + esc(a.titulo) + "</b>" + (a.ventana ? '<span class="chico">Abre una ventana en el escritorio: usa sus teclas para capturar o salir. Cancelar la cierra.</span>' : "");
+  for (const [k, tipo] of Object.entries(a.opciones || {})) {
+    const v = o[k];
+    if (tipo === "flag") h += '<label><input type="checkbox" data-op="' + k + '"' + (v ? " checked" : "") + "> " + esc(k) + "</label>";
+    else if (Array.isArray(tipo)) h += "<label>" + esc(k) + ' <select data-op="' + k + '">' +
+      tipo.map(x => "<option" + (x === v ? " selected" : "") + ">" + esc(x) + "</option>").join("") + "</select></label>";
+    else h += "<label>" + esc(k) + ' <input data-op="' + k + '" type="' + (tipo === "int" ? "number" : "text") + '" value="' + esc(v == null ? "" : v) + '"></label>';
+  }
+  return h + '<button class="mini pri" data-correr="1">' + (a.aplicar ? "Ver reporte" : "Ejecutar") +
+    '</button><button class="mini" data-cerrar="1">Cerrar</button></div>';
+}
+function tarjeta(t) {
+  const ls = t.ls || {}, sig = t.siguiente || {}, sa = sigAccion(sig.cmd), key = (t.slug || "") + "|" + (t.n || "");
+  TARJ[key] = t;
+  let h = '<div class="pro"><h3>' + esc(t.titulo) + '</h3><p class="meta">' +
+    (t.slug ? "slug <b>" + esc(t.slug) + "</b>" : "sin spec") + " | " +
+    (t.n ? "proyecto <b>" + t.n + "</b>" + (t.vinculo === "titulo" ? " (vinculado por titulo)" : "") : "sin proyecto en Label Studio") + "</p>";
+  if (t.protegido) h += '<span class="badge prot">protegido</span>';
+  if (t.spec) h += '<span class="badge">spec</span>';
+  if (t.borrado) h += '<span class="badge">borrado</span>';
+  if (sig.texto) h += '<div class="sig">Siguiente: ' + esc(sig.texto) + (sig.cmd ? "<code>" + esc(sig.cmd) + "</code>" : "") + "</div>";
+  if (t.n) h += '<p class="chico">Tareas ' + (ls.task_number ?? "?") + " | anotadas " + (ls.num_tasks_with_annotations ?? "?") +
+    " | predicciones " + (ls.total_predictions_number ?? "?") + " | version " + esc(ls.model_version || "-") +
+    ' | <a href="' + esc(LS_URL) + "/projects/" + t.n + '/" target="_blank" rel="noopener">abrir en Label Studio</a></p>';
+  if (t.error_spec) h += '<p class="avisos">' + esc(t.error_spec) + "</p>";
+  if (t.fotos) h += '<div class="tablas"><table><tr><th>Carpeta</th><th>Tipo</th><th class="n">Plan completo</th><th class="n">Tienes</th></tr>' +
+    t.fotos.map(f => "<tr><td>" + esc(f.carpeta) + "</td><td>" + esc(f.tipo) + '</td><td class="n">' + f.recom + '</td><td class="n">' + f.tienes + "</td></tr>").join("") +
+    "</table></div>";
+  const a = t.asistente;
+  if (a) h += '<p class="chico">Asistente: ' + esc(a.ultimo) + " (" + esc(a.trabajo) + ")" + (a.aplicada ? " | spec aplicada" : "") + "</p>";
+  const lo = t.lotes;
+  if (lo && (lo.en_colab.length || lo.sin_importar.length)) h += '<p class="chico">Lotes en Colab: ' + lo.en_colab.length + " | predicciones sin importar: " + lo.sin_importar.length + "</p>";
+  const m = t.modelos;
+  if (m && m.n) h += '<p class="chico">Modelos: ' + m.n + " | activo: " + esc(m.activo || "ninguno") + '</p><div class="tablas"><pre class="mini">' + esc((m.tabla || []).join("\n")) + "</pre></div>";
+  if (t.runs_sin_registrar && t.runs_sin_registrar.length) h += '<p class="chico">Corridas sin registrar: ' + esc(t.runs_sin_registrar.join(", ")) + "</p>";
+  if (t.datasets && t.datasets.length) h += '<p class="chico">Ultimo dataset: ' + esc(t.datasets[t.datasets.length - 1]) + "</p>";
+  const lst = Object.entries(ACC).filter(([k, ac]) => visible(k, ac, t, sa));
+  let bot = lst.map(([k, ac]) => '<button class="mini' + (k === sa ? " pri" : "") + '" data-abrir="' + esc(k) + '" data-key="' + esc(key) + '">' + esc(ac.titulo) + "</button>").join("");
+  if (t.slug && !t.protegido) bot += '<button class="mini" data-asist="' + esc(t.slug) + '">Asistente</button>';
+  if (bot) h += '<div class="acc">' + bot + "</div>";
+  if (ABIERTA && ABIERTA.key === key) h += formulario(ABIERTA);
+  return h + "</div>";
+}
+function pintarProyectos() {
+  TARJ = {};
+  const todos = $("#todos").checked, ts = ULTIMO.filter(t => todos || !(t.protegido || t.borrado));
+  const ocultos = ULTIMO.length - ts.length;
+  $("#proyectos").innerHTML = (ts.map(tarjeta).join("") || '<p class="chico">Sin proyectos.</p>') +
+    (ocultos ? '<p class="chico">' + ocultos + " ocultos (protegidos o borrados)</p>" : "");
+}
+async function cargarProyectos() {
+  $("#actualizar").disabled = true;
+  try {
+    const r = await api("/api/proyectos");
+    $("#avisos").innerHTML = (r.avisos || []).map(esc).join("<br>");
+    ULTIMO = r.tarjetas; pintarProyectos();
+  } catch (e) { $("#proyectos").innerHTML = '<p class="avisos">Error: ' + esc(e.message) + "</p>"; }
+  $("#actualizar").disabled = false;
+}
+$("#proyectos").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.asist) {
+    $("#aslug").value = b.dataset.asist; cargarAsistente();
+    $("#asistente").scrollIntoView({behavior: "smooth"});
+  } else if (b.dataset.abrir) {
+    const t = TARJ[b.dataset.key], k = b.dataset.abrir, sig = t.siguiente || {};
+    ABIERTA = {key: b.dataset.key, accion: k, slug: t.slug, n: t.n,
+      opciones: Object.assign({}, DEFECTOS[k] || {}, sigAccion(sig.cmd) === k ? opcionesDe(sig.cmd) : {})};
+    pintarProyectos();
+  } else if (b.dataset.cerrar) { ABIERTA = null; pintarProyectos(); }
+  else if (b.dataset.correr) {
+    const o = {};
+    document.querySelectorAll(".form [data-op]").forEach(x => o[x.dataset.op] = x.type === "checkbox" ? x.checked : x.value);
+    ABIERTA.opciones = o;
+    correrAccion(ABIERTA, false);
+  }
+};
+document.querySelectorAll("button[data-cmd]").forEach(b => b.onclick = () => {
+  const cmd = b.dataset.cmd;
+  if (cmd === "reiniciar-motor" && !confirm("Reiniciar el motor descarta SAM 3 cargado y la cache. Continuar?")) return;
+  const p = ["--proyecto", $("#proy").value];
+  const forzar = cmd === "reiniciar-motor" && confirm("Forzar aunque el motor tenga trabajo en cola? Ese trabajo se descarta. (Cancelar = reiniciar solo si esta libre)");
+  ejecutar(cmd, cmd === "precalentar" ? p : cmd === "reiniciar-motor" ? ["--precalentar", ...p, ...(forzar ? ["--forzar"] : [])] : []);
+});
+$("#agrabar").onclick = grabar;
+$("#aarchivo").onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  BLOB = f; EXT = ((f.name.match(/\.[^.]+$/) || [""])[0]).toLowerCase();
+  $("#aaudio").src = URL.createObjectURL(f); $("#aaudio").style.display = "block";
+  $("#arecinfo").textContent = "Archivo: " + f.name;
+};
+$("#aenviar").onclick = () => enviarAsistente(false);
+$("#acargar").onclick = cargarAsistente;
+$("#confsi").onclick = () => { if (PENDIENTE) correrAccion(PENDIENTE, true); };
+$("#confno").onclick = () => { PENDIENTE = null; ocultarConfirmar(); };
+$("#cancelar").onclick = async () => { await api("/api/cancelar", {}); sondear(); };
+$("#actualizar").onclick = cargarProyectos;
+$("#todos").onchange = pintarProyectos;
+(async () => {
+  try { ACC = (await api("/api/acciones")).acciones; } catch (e) { alert("No pude leer las acciones: " + e.message); }
+  cargarServicios(); cargarProyectos(); cargarExternos(); sondear();
+})();
+</script>
+</body>
+</html>
