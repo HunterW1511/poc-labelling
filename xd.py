@@ -2,7 +2,7 @@
 """CLI del sistema de pre-etiquetado (A.5). Solo biblioteca estandar: corre con cualquier Python >= 3.10
 en Windows, Mac o Linux, sin venv. Lee la configuracion del .env de esta carpeta.
 Uso: python xd.py <comando> [opciones]    (python xd.py -h)"""
-import argparse, json, re, shutil, subprocess, sys, time, urllib.request
+import argparse, json, os, re, shutil, subprocess, sys, time, urllib.request
 from pathlib import Path, PurePosixPath
 
 RAIZ = Path(__file__).resolve().parent
@@ -226,8 +226,55 @@ def cmd_dataset(a):
     return 0
 
 
+TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar")
+TESTS_MOTOR = ("generar", "spec", "hijo", "reglas")      # necesitan el contenedor (torch, rutas /app)
+
+
+def _correr(cmd, timeout=600):
+    t0 = time.time()
+    try:
+        p = subprocess.run(cmd, cwd=RAIZ, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout,
+                           env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1"))
+        return p.returncode, (p.stdout or "") + (p.stderr or ""), time.time() - t0
+    except subprocess.TimeoutExpired:
+        return 124, f"tiempo agotado ({timeout}s)", time.time() - t0
+
+
 def cmd_test(a):
-    return en_motor("test_reglas.py", *([a.proyecto] if a.proyecto else []))[0]
+    """Todos los tests (host + contenedor). rc 0 solo si todos pasan; 2 si la lista de tests esta desactualizada."""
+    dm = RAIZ / "motor"
+    hay = sorted(f.stem[5:] for f in dm.glob("test_*.py"))
+    sin = [x for x in hay if x not in TESTS_HOST + TESTS_MOTOR]
+    faltan = [x for x in TESTS_HOST + TESTS_MOTOR if x not in hay]
+    if sin or faltan:
+        print(f"ERROR: lista de tests desactualizada en xd.py | sin clasificar {sin} | no existen {faltan}")
+        return 2
+    plan = [(x, "host") for x in TESTS_HOST if a.solo in (None, "host")]
+    plan += [(x, "motor") for x in TESTS_MOTOR if a.solo in (None, "motor")]
+    plan = [(x, d) for x, d in plan if a.k in x]
+    if not plan:
+        print(f"ningun test coincide con -k {a.k!r}")
+        return 2
+    motor_ok = _estado() is not None if any(d == "motor" for _, d in plan) else True
+    fallas = []
+    for x, d in plan:
+        if d == "host":
+            rc, out, seg = _correr([sys.executable, str(dm / f"test_{x}.py")])
+        elif not motor_ok:
+            rc, out, seg = 1, "motor no responde: docker compose up -d", 0.0
+        else:
+            extra = [str(a.proyecto)] if x == "reglas" and a.proyecto else []
+            rc, out, seg = _correr(["docker", "compose", "exec", "-T", "motor", "python", f"/app/test_{x}.py", *extra])
+        lineas = [l for l in out.splitlines() if l.strip()]
+        print(f"  {'OK   ' if rc == 0 else 'FALLA'} {x:<12} {d:<5} {seg:5.1f}s  {(lineas[-1] if lineas else '')[:80]}")
+        if a.verbose or rc != 0:
+            for l in (lineas if a.verbose else lineas[-15:]):
+                print(f"        | {l}")
+        if rc != 0:
+            fallas.append(x)
+    print(f"{len(plan) - len(fallas)}/{len(plan)} OK" + (f" | fallaron: {fallas}" if fallas else ""))
+    return 1 if fallas else 0
 
 
 def _spec(slug):
@@ -540,8 +587,11 @@ def main():
     p.add_argument("--correcciones", default="", help="'ultimo' o archivo de motor/correcciones")
     p.set_defaults(f=cmd_dataset)
 
-    p = sub.add_parser("test", help="prueba sintetica de reglas.py (+ perfil real si das proyecto)")
-    p.add_argument("proyecto", type=int, nargs="?")
+    p = sub.add_parser("test", help="corre todos los tests (host + contenedor); rc 0 solo si todos pasan")
+    p.add_argument("--solo", choices=["host", "motor"])
+    p.add_argument("-k", default="", help="solo tests cuyo nombre contiene este texto")
+    p.add_argument("-v", "--verbose", action="store_true", help="salida completa de cada test")
+    p.add_argument("--proyecto", type=int, help="test_reglas tambien con el perfil real de ese proyecto")
     p.set_defaults(f=cmd_test)
 
     p = sub.add_parser("crear-proyecto", help="crea carpetas + proyecto desde motor/proyectos/<slug>/spec.json")
