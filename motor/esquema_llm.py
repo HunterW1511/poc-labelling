@@ -57,8 +57,9 @@ REGLAS = [
     "Un estado o defecto de un objeto (roto, abierto, vacio) solo es clase aparte si el usuario lo pidio. "
     "Si no queda claro, pregunta.",
     "max_por_imagen: el numero que dijo el usuario de cuantos objetos de esa clase puede haber en una foto o en "
-    "el conjunto (ej. 'lleva 10 tornillos' -> 10). Si no dijo ningun numero para esa clase: null y pregunta. "
-    "No inventes 1.",
+    "el conjunto (ej. 'lleva 10 tornillos' -> 10). Si da una relacion entre clases, multiplica: 'caben 3 cajas y "
+    "cada caja trae 6 huevos' -> Caja 3, Huevo 18. Si no dijo ningun numero ni relacion para esa clase: null y "
+    "pregunta. No inventes 1.",
     "importancia: 'alta' solo para lo que el usuario recalca como critico, pequeno o dificil de ver; "
     "'baja' si dice que importa poco; en cualquier otro caso null.",
     "Cada clase con un color distinto; si el usuario menciono el color del objeto, usa ese.",

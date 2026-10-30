@@ -44,6 +44,9 @@ def normalizar(p):
                 k["nombre"] = n
         if isinstance(k.get("clases"), list):
             k["clases"] = [mapa.get(x) or _ident(x) if isinstance(x, str) else x for x in k["clases"]]
+        if k.get("tipo") == "mezcla" and isinstance(k.get("clases"), list) and len(set(k["clases"])) == 1:
+            cor.append(f"carpeta '{k.get('nombre')}' tiene una sola clase: mezcla -> pieza")
+            k["tipo"] = "pieza"
     pr = p.get("proyecto")
     if isinstance(pr, dict) and isinstance(pr.get("slug"), str) and pr["slug"].strip():
         s = _ident(pr["slug"]).lower()
@@ -133,6 +136,22 @@ def verificar_conteos(s, conteos):
                        f"citado, corrige el conteo")
     return out
 
+def filtrar_preguntas(preguntas, s):
+    """Quita las preguntas de cantidad sobre clases que ya tienen max_por_imagen. DETERMINISTA.
+    -> (preguntas, correcciones)"""
+    ya = [str(c.get("nombre")).replace("_", " ").lower() for c in ((s or {}).get("clases") or [])
+          if isinstance(c, dict) and c.get("max_por_imagen") is not None and c.get("nombre")]
+    out, cor = [], []
+    for p in preguntas:
+        q = unicodedata.normalize("NFKD", str(p)).encode("ascii", "ignore").decode().lower()
+        n = next((x for x in ya if "cuant" in q and x in q), None)
+        if n:
+            cor.append(f"pregunta quitada (ya hay max_por_imagen de {n}): {p}")
+        else:
+            out.append(p)
+    return out, cor
+
+
 def mensaje_usuario(texto, respuestas="", vocabulario=(), previa=None):
     partes = ["DESCRIPCION DEL USUARIO:", str(texto).strip()]
     if vocabulario:
@@ -167,8 +186,10 @@ def generar_spec(texto, llm, respuestas="", vocabulario=(), previa=None, intento
             errores, avisos = spec.validar(s)
             problemas = errores + exigencias(s) + verificar_conteos(s, obj.get("conteos"))
         historial.append({"intento": i, "problemas": problemas, "info": info})
+        preg, quitadas = filtrar_preguntas(list((obj or {}).get("preguntas") or []), s)
+        cor += quitadas
         res = {"ok": not problemas, "spec": s, "supuestos": list((obj or {}).get("supuestos") or []),
-               "preguntas": list((obj or {}).get("preguntas") or []), "conteos": list((obj or {}).get("conteos") or []), "correcciones": cor, "avisos": avisos,
+               "preguntas": preg, "conteos": list((obj or {}).get("conteos") or []), "correcciones": cor, "avisos": avisos,
                "problemas": problemas, "intentos": i, "historial": historial}
         if not problemas:
             break
