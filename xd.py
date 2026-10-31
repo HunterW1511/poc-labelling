@@ -227,7 +227,7 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla")
+              "plantilla", "notebooks")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -283,6 +283,50 @@ def _spec(slug):
     if not ruta.exists():
         raise SystemExit(f"No existe {ruta}")
     return json.loads(ruta.read_text(encoding="utf-8"))
+
+
+def _dir_cuadernos():
+    if ENV.get("CUADERNOS_DRIVE"):
+        return Path(ENV["CUADERNOS_DRIVE"])
+    if ENV.get("LOTES_DRIVE"):
+        return Path(ENV["LOTES_DRIVE"]).parent.parent / "Colab Notebooks"
+    raise SystemExit("Define LOTES_DRIVE (o CUADERNOS_DRIVE) en .env")
+
+
+def cmd_cuadernos(a):
+    """notebooks/ (repo, fuente de verdad) <-> copias en Drive. Por defecto solo reporta."""
+    import cuadernos as C
+    repo, drv = RAIZ / "notebooks", _dir_cuadernos()
+    print(f"repo  {repo}\ndrive {drv}")
+    cambios = 0
+    for n in C.NOMBRES:
+        fr, fd = repo / n, drv / n
+        r = json.loads(fr.read_text(encoding="utf-8")) if fr.exists() else None
+        d = json.loads(fd.read_text(encoding="utf-8")) if fd.exists() else None
+        if r is None and d is None:
+            print(f"  {n:<22} no existe en ningun lado")
+            continue
+        estado = "solo en repo" if d is None else "solo en Drive" if r is None else (C.diferencias(r, d) or "igual")
+        print(f"  {n:<22} {estado}")
+        if estado == "igual":
+            continue
+        if a.traer and d is not None:
+            cambios += 1
+            if a.aplicar:
+                fr.write_text(C.texto(d), encoding="utf-8", newline="\n")
+                print("      -> repo actualizado (sin salidas ni metadatos)")
+        if a.llevar and r is not None:
+            if d is not None and not a.forzar:
+                print("      NO llevo: la copia de Drive tiene cambios que el repo no tiene (traelos o usa --forzar)")
+                continue
+            cambios += 1
+            if a.aplicar:
+                drv.mkdir(parents=True, exist_ok=True)
+                fd.write_text(C.texto(r), encoding="utf-8", newline="\n")
+                print("      -> Drive actualizado")
+    if (a.traer or a.llevar) and cambios and not a.aplicar:
+        print("SOLO REPORTE: usa --aplicar")
+    return 0
 
 
 PLANTILLA = RAIZ / "motor" / "plantillas" / "spec_plantilla.json"
@@ -668,6 +712,14 @@ def main():
     p.add_argument("-v", "--verbose", action="store_true", help="salida completa de cada test")
     p.add_argument("--proyecto", type=int, help="test_reglas tambien con el perfil real de ese proyecto")
     p.set_defaults(f=cmd_test)
+
+    p = sub.add_parser("cuadernos", help="compara notebooks/ con las copias de Colab en Drive; --traer o --llevar")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--traer", action="store_true", help="Drive -> repo (limpia salidas y metadatos)")
+    g.add_argument("--llevar", action="store_true", help="repo -> Drive")
+    p.add_argument("--forzar", action="store_true", help="con --llevar: pisa una copia de Drive distinta")
+    p.add_argument("--aplicar", action="store_true")
+    p.set_defaults(f=cmd_cuadernos)
 
     p = sub.add_parser("spec-nueva", help="spec desde la plantilla (camino sin asistente); reporte o --aplicar")
     p.add_argument("slug")
