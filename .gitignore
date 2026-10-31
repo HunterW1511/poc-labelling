@@ -55,3 +55,6 @@ _compartir/
 
 # Spike L.8 (solo medir)
 motor/_l8/
+
+# Registro de OpenVINO al probar la GPU Intel (L.9)
+kernel.errors.txt
