@@ -23,6 +23,7 @@ _obj = {"proyecto": None, "tid": 0, "perfil": None}
 _cache = OrderedDict()            # ruta -> (features, dataset)
 _en_proceso = set()
 _lista = {"t": 0.0, "proyecto": None, "tareas": []}
+cola.al_vaciar.append(_ev.set)    # L.10: al vaciarse la cola semantica, reanudar la precodificacion
 PISO_REL = 0.1                    # una alternativa cuenta si su conf >= 10% de la mejor (el area filtra el resto)
 MIN_PIX = 20                      # en clic se ignora area_min del perfil; solo se descartan mascaras < 20 px
 from config import CACHE_MAX, PREVIAS   # dependen del equipo (.env): tareas por delante | imagenes en cache
@@ -143,12 +144,17 @@ def _apuntar(proyecto, tid, perfil):
     _ev.set()
 
 
+def _puede_precodificar():
+    """L.10: con trabajo semantico en cola la precodificacion cede la CPU (en 2 nucleos competir lo hace 2-4x mas lento)."""
+    return _est["pred"] is not None and not _est["calentando"] and not cola.ocupada()
+
+
 def _bucle_pre():
     while True:
         _ev.wait()
         _ev.clear()
         try:
-            while _est["pred"] is not None and not _est["calentando"]:
+            while _puede_precodificar():
                 proyecto, tid, perfil = _obj["proyecto"], _obj["tid"], _obj["perfil"]
                 falta = None
                 for t in _siguientes(proyecto, tid):

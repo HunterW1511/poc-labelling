@@ -16,7 +16,8 @@ from config import HEADERS, LS_URL, SAM3_MODEL, dispositivo   # re-exportados: o
 _cola, _pendientes, _lock = queue.Queue(), set(), threading.Lock()
 _hilo = None
 CARGA = threading.Lock()   # una carga de modelo a la vez (evita OOM)
-_sam = {"pred": None, "imgsz": None}
+_sam = {"pred": None, "imgsz": None, "cargando": False, "esperando_carga": False}
+al_vaciar = []             # L.10: callbacks cuando la cola semantica queda vacia (el interactivo reanuda la precodificacion)
 
 
 def overrides_sam3(imgsz, conf):
@@ -42,6 +43,23 @@ def encolar(tareas, perfil, version):
     log.info("encoladas %d | en cola %d", n, _cola.qsize())
 
 
+def ocupada():
+    """Hay trabajo semantico pendiente o en curso (L.10: la precodificacion interactiva cede la CPU)."""
+    return _cola.unfinished_tasks > 0
+
+
+def _terminar(tid):
+    with _lock:
+        _pendientes.discard(tid)
+    _cola.task_done()
+    if not ocupada():
+        for f in list(al_vaciar):
+            try:
+                f()
+            except Exception:
+                log.exception("al_vaciar fallo")
+
+
 def _ya_tiene(task_id, version):
     r = requests.get(f"{LS_URL}/api/predictions", params={"task": task_id}, headers=HEADERS, timeout=30)
     r.raise_for_status()
@@ -51,18 +69,26 @@ def _ya_tiene(task_id, version):
 def _predictor(imgsz):
     if _sam["pred"] is not None and _sam["imgsz"] == imgsz:
         return _sam["pred"]                      # ya cargado: sin esperar el candado
-    with CARGA:
-        return _predictor_sin_candado(imgsz)
+    _sam["esperando_carga"] = True                 # L.10: visible en /estado (explica una cola quieta)
+    try:
+        with CARGA:
+            _sam["esperando_carga"] = False
+            return _predictor_sin_candado(imgsz)
+    finally:
+        _sam["esperando_carga"] = False
 
 
 def _predictor_sin_candado(imgsz):
     if _sam["pred"] is None or _sam["imgsz"] != imgsz:
         from ultralytics.models.sam import SAM3SemanticPredictor
         t0 = time.time()
-        _sam["pred"] = None                                  # libera el anterior antes de cargar otro
-        _sam["pred"] = SAM3SemanticPredictor(overrides=overrides_sam3(imgsz, 0.05))
-        _sam["pred"].set_image(np.zeros((imgsz, imgsz, 3), np.uint8))   # fuerza la carga dentro del candado
-        _sam["imgsz"] = imgsz
+        _sam["pred"], _sam["cargando"] = None, True          # libera el anterior antes de cargar otro
+        try:
+            p = SAM3SemanticPredictor(overrides=overrides_sam3(imgsz, 0.05))
+            p.set_image(np.zeros((imgsz, imgsz, 3), np.uint8))   # fuerza la carga dentro del candado
+            _sam["pred"], _sam["imgsz"] = p, imgsz             # L.10: visible solo cuando ya esta listo
+        finally:
+            _sam["cargando"] = False
         log.info("SAM 3 listo (imgsz=%d, device=%s) en %.0fs", imgsz, dispositivo(), time.time() - t0)
     return _sam["pred"]
 
@@ -86,9 +112,7 @@ def _trabajar():
         except Exception:
             log.exception("tarea %s fallo", tid)
         finally:
-            with _lock:
-                _pendientes.discard(tid)
-            _cola.task_done()
+            _terminar(tid)
 
 
 

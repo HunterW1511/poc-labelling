@@ -58,3 +58,4 @@ motor/_l8/
 
 # Registro de OpenVINO al probar la GPU Intel (L.9)
 kernel.errors.txt
+motor/_l10/

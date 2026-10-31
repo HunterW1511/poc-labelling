@@ -31,7 +31,8 @@ class MotorPreetiquetado(LabelStudioMLBase):
                 return ModelResponse(predictions=[])
             preds = interactivo.responder(tasks[0], context, perfil, "clic-" + self._version(), self.label_config, self.project_id)
             return ModelResponse(predictions=preds)
-        interactivo.precalentar(perfil["imgsz"], perfil, self.project_id)     # el primer clic no espera la carga
+        if len(tasks) == 1:        # L.10: una tarea = alguien la abrio para etiquetar; un lote no despierta al interactivo
+            interactivo.precalentar(perfil["imgsz"], perfil, self.project_id)     # el primer clic no espera la carga
         if not perfil["prompts"]:
             log.warning("proyecto %s sin prompts en el XML; nada que hacer", self.project_id)
             return ModelResponse(predictions=[])

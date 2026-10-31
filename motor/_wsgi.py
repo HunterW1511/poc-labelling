@@ -23,4 +23,7 @@ def estado():
         "precodificando": len(interactivo._en_proceso),
         "cola": cola._cola.qsize(), "cola_pendientes": len(cola._pendientes),
         "semantico_cargado": cola._sam["pred"] is not None,
+        "semantico_cargando": cola._sam.get("cargando", False),
+        "semantico_esperando_carga": cola._sam.get("esperando_carga", False),
+        "precodificacion_en_pausa": cola.ocupada(),
         "uptime_s": round(time.time() - _INICIO)})
