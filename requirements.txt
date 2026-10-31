@@ -1,3 +1,8 @@
-ultralytics>=8.2
-requests>=2.31
-python-dotenv>=1.0
+# Dependencias del HOST (Windows o Linux, Python 3.12-3.14). El motor tiene las suyas en motor/requirements.txt.
+# xd.py, tablero.py, ui.py y cuadernos.py usan solo la biblioteca estandar.
+# ver_cajas.py y capturar.py (camara y modelo en vivo) necesitan:
+ultralytics==8.4.174      # la MISMA version que el motor y los cuadernos: un modelo de otra version puede no cargar
+opencv-python==5.0.0.93   # camara y dibujo
+openvino==2026.3.1        # backend de ver (L.9); opcional: sin el, ver usa PyTorch
+# torch lo instala ultralytics (en Windows, el de PyPI ya es CPU). Para fijarlo igual que el motor:
+#   pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
