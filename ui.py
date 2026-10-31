@@ -42,7 +42,8 @@ ACCIONES = {
     "modelos": {"id": "n", "titulo": "Modelos"},
     "aceptacion": {"id": "n", "titulo": "Aceptacion", "opciones": {"--versiones": "str"}},
     "ver": {"id": "n", "ventana": True, "titulo": "Ver en vivo",
-            "opciones": {"--modelo": "str", "--camara": "int", "--conf": "str", "--imgsz": "int"}},
+            "opciones": {"--modelo": "str", "--camara": "int", "--conf": "str", "--imgsz": "int",
+                        "--backend": ["auto", "pt", "openvino"]}},
     "borrar-proyecto": {"id": "slug", "aplicar": True, "titulo": "Borrar proyecto"},
     "archivar": {"id": "archivo", "aplicar": True, "titulo": "Archivar"},
 }

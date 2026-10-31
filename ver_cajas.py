@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""D.8: prueba en vivo con webcam del modelo hijo registrado (corre en el host, no en Docker).
-Uso: python ver_cajas.py <proyecto> [--modelo X] [--camara 0] [--conf 0.25] [--imgsz N]
+"""D.8 + L.9: prueba en vivo con webcam del modelo hijo registrado (corre en el host, no en Docker).
+Uso: python ver_cajas.py <proyecto> [--modelo X] [--camara 0] [--conf 0.25] [--imgsz N] [--backend auto|pt|openvino]
+Backend (L.9): OpenVINO en CPU con la forma RECTANGULAR de la camara, exportado una vez junto a best.pt
+(medido en i7-7600U: x1.4 a imgsz 640, x1.1 a 960). Siempre device intel:cpu: AUTO anula la ganancia.
+auto = OpenVINO si esta instalado; si no, o si falla, PyTorch avisando.
 Teclas: +/- confianza | p pausa | s guardar captura | q/ESC salir"""
-import argparse, colorsys, hashlib, json, time
+import argparse, colorsys, hashlib, json, math, shutil, time
 from collections import Counter
 from pathlib import Path
 
@@ -28,6 +31,36 @@ def modelo_registro(proyecto, nombre=""):
     if not pt.exists():
         raise SystemExit(f"Falta el archivo {pt}")
     return nombre, pt, m.get("resumen") or {}
+
+
+def forma_rect(lado, h, w):
+    """[alto, ancho] con el lado mayor = lado y el menor proporcional a la camara, multiplo de 32 hacia arriba."""
+    if w >= h:
+        return [math.ceil(lado * h / w / 32) * 32, lado]
+    return [lado, math.ceil(lado * w / h / 32) * 32]
+
+
+def cargar(pt, imgsz, backend, h, w):
+    """-> (modelo, kwargs de predict, etiqueta del backend)."""
+    from ultralytics import YOLO                      # import lento: despues de validar
+    m_pt = YOLO(str(pt))
+    if backend in ("auto", "openvino"):
+        try:
+            import openvino  # noqa: F401
+            forma = forma_rect(imgsz, h, w)
+            dst = pt.with_name(f"{pt.stem}_{forma[0]}x{forma[1]}_openvino_model")   # sufijo obligatorio
+            if not dst.exists() or dst.stat().st_mtime < pt.stat().st_mtime:
+                print(f"Exportando a OpenVINO {forma[0]}x{forma[1]} (solo la primera vez o si cambio best.pt)...")
+                shutil.rmtree(dst, ignore_errors=True)
+                out = Path(YOLO(str(pt)).export(format="openvino", imgsz=forma, half=False, dynamic=False))
+                shutil.move(str(out), str(dst))
+            m_ov = YOLO(str(dst), task=m_pt.task)
+            return m_ov, {"imgsz": forma, "device": "intel:cpu"}, f"openvino {forma[0]}x{forma[1]}"
+        except Exception as e:
+            if backend == "openvino":
+                raise SystemExit(f"OpenVINO no disponible: {type(e).__name__}: {e}")
+            print(f"AVISO: OpenVINO no disponible ({type(e).__name__}: {str(e)[:100]}); uso PyTorch")
+    return m_pt, {"imgsz": imgsz}, "pytorch"
 
 
 def color(nombre):
@@ -72,33 +105,39 @@ def main():
     ap.add_argument("--camara", type=int, default=0)
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--imgsz", type=int, default=0, help="defecto: el del entrenamiento (registro)")
+    ap.add_argument("--backend", choices=["auto", "pt", "openvino"], default="auto")
     a = ap.parse_args()
 
     nombre, pt, res = modelo_registro(a.proyecto, a.modelo)
     imgsz = a.imgsz or res.get("imgsz") or 640
-    print(f"Modelo {nombre} | {pt} | imgsz {imgsz} | conteo val {res.get('conteo_exactas')}/{res.get('conteo_imagenes')}")
-    from ultralytics import YOLO                      # import lento: despues de validar
-    model = YOLO(str(pt))
-    names = model.names
     cap = abrir(a.camara)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    ok, frame = cap.read()                            # la forma de la camara define la exportacion rectangular
+    if not ok:
+        raise SystemExit("La camara no entrega imagenes")
+    h, w = frame.shape[:2]
+    model, kw, etiqueta = cargar(pt, imgsz, a.backend, h, w)
+    names = model.names
+    print(f"Modelo {nombre} | {pt} | imgsz {imgsz} | camara {w}x{h} | backend {etiqueta} | "
+          f"conteo val {res.get('conteo_exactas')}/{res.get('conteo_imagenes')}")
     salida = RAIZ / "capturas"
-    conf, fps, pausa, rehacer, frame, vis, cuenta = a.conf, 0.0, False, False, None, None, Counter()
+    conf, fps, pausa, rehacer, vis, cuenta = a.conf, 0.0, False, True, None, Counter()
     print("Teclas: +/- confianza | p pausa | s guardar | q/ESC salir")
     while True:
-        if not pausa or rehacer or frame is None:
-            if not pausa or frame is None:
+        if not pausa or rehacer:
+            if not pausa and not rehacer:
                 ok, frame = cap.read()
                 if not ok:
                     print("La camara dejo de entregar imagenes")
                     break
             t0 = time.time()
-            r = model.predict(frame, imgsz=imgsz, conf=conf, verbose=False)[0]
+            r = model.predict(frame, conf=conf, verbose=False, **kw)[0]
             dt = max(1e-3, time.time() - t0)
             fps = 1 / dt if not fps else 0.8 * fps + 0.2 / dt
             vis = frame.copy()
-            cuenta = dibujar(vis, r, names, f"{nombre} | conf {conf:.2f} | {fps:.1f} fps" + (" | PAUSA" if pausa else ""))
+            cuenta = dibujar(vis, r, names, f"{nombre} | {etiqueta} | conf {conf:.2f} | {fps:.1f} fps"
+                             + (" | PAUSA" if pausa else ""))
             rehacer = False
         cv2.imshow(TITULO, vis)
         k = cv2.waitKey(1) & 0xFF
@@ -115,7 +154,8 @@ def main():
             base = salida / f"ver_{nombre}_{time.strftime('%Y%m%d_%H%M%S')}"
             cv2.imwrite(str(base) + ".jpg", vis)
             base.with_suffix(".json").write_text(json.dumps({"modelo": nombre, "conf": conf, "imgsz": imgsz,
-                                                             "conteo": dict(cuenta)}, indent=1), encoding="utf-8")
+                                                             "backend": etiqueta, "conteo": dict(cuenta)}, indent=1),
+                                                 encoding="utf-8")
             print(f"Guardado {base}.jpg  {dict(cuenta)}")
     cap.release()
     cv2.destroyAllWindows()

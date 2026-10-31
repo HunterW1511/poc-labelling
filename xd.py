@@ -227,7 +227,7 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks")
+              "plantilla", "notebooks", "ver")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -555,7 +555,7 @@ def cmd_aceptacion(a):
 def cmd_ver(a):
     args = [sys.executable, str(RAIZ / "ver_cajas.py"), str(a.proyecto), "--camara", str(a.camara),
             "--conf", str(a.conf)] + (["--modelo", a.modelo] if a.modelo else []) + \
-           (["--imgsz", str(a.imgsz)] if a.imgsz else [])
+           (["--imgsz", str(a.imgsz)] if a.imgsz else []) + ["--backend", a.backend]
     return subprocess.call(args, cwd=RAIZ)
 
 # ----------------------------------------------------------------- asistente (etapa C)
@@ -777,6 +777,8 @@ def main():
     p.add_argument("--camara", type=int, default=0)
     p.add_argument("--conf", type=float, default=0.25)
     p.add_argument("--imgsz", type=int, default=0)
+    p.add_argument("--backend", choices=["auto", "pt", "openvino"], default="auto",
+                   help="auto: OpenVINO en CPU si esta instalado (L.9), si no PyTorch")
     p.set_defaults(f=cmd_ver)
     p = sub.add_parser("asistente", help="describe el caso por audio o texto -> trabajo para Colab (spec con LLM)")
     p.add_argument("slug")
