@@ -82,6 +82,14 @@ de una persona a traves del hub, es al menos una zona gris y arriesga la cuenta.
    el hub (`requirements.txt`). Sin llamadas REST a mano.
 6. **Colab sigue de respaldo** con el mismo `worker.py`; el transporte Drive no se toca.
 
+## 3b. Decisiones tomadas (03/11/2026)
+- **D2: una cuenta de Kaggle por persona**; cada envio usa el token de quien lo lanza.
+- **Proveedor del piloto: Kaggle.** Se evaluo Alibaba Cloud PAI-DSW (free trial): ~250 horas-computo al mes
+  (A10: ~36 h al mes), cobro automatico por uso al terminar el trial, verificacion real-name, y DSW es un IDE (los
+  trabajos irian por PAI-DLC y un endpoint por PAI-EAS, de pago). Queda para el **escalado** como otra
+  implementacion del adaptador de transporte (D5). Kaggle no permite tuneles ni URLs de entrada, pero el diseno no
+  los necesita: el hub empuja trabajos y trae resultados; el clic interactivo se resuelve en P.3 con cache.
+
 ## 4. Lo que se mide en P.2.6-P.2.8 (anotar maquina y fecha)
 - Cuota real en la cuenta y la que consume cada envio.
 - Tiempo desde `datasets version` hasta que el kernel lo ve; desde `kernels push` hasta `running` (cola de GPU).
@@ -104,3 +112,7 @@ de una persona a traves del hub, es al menos una zona gris y arriesga la cuenta.
 - Ollama en Kaggle: https://dev.to/ifeanyi_idiaye_3f6d81ed8a/run-deepseek-r-1-thinking-model-in-kaggle-notebook-using-ollama-5195 ;
   Ollama con GGUF propio: https://qwen.readthedocs.io/en/latest/run_locally/ollama.html
 - Imagen de Kaggle: https://www.github.com/Kaggle/docker-python/releases/latest
+- PAI-DSW (free quota, horas-computo por tipo de instancia): https://help.aliyun.com/en/pai/faq-about-dsw ;
+  free trials de Alibaba Cloud: https://help.aliyun.com/en/user-center/product-overview/learn-about-free-trials ;
+  API de DSW: https://www.alibabacloud.com/help/en/pai/developer-reference/api-pai-dsw-2022-01-01-overview
+- Kaggle bloquea SSH por ngrok (reportes de usuarios): https://github.com/abhishekkrthakur/colabcode/issues/73
