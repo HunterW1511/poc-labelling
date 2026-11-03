@@ -55,6 +55,8 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
 - `python xd.py cuadernos [--traer | --llevar] [--forzar] [--aplicar]`: el repo es la fuente de verdad de los cuadernos.
 - `python xd.py trabajos [--todos] [--tipo T] [--estado E]`: la cola de trabajos. `--reconciliar [--aplicar]` la
   pone al dia con lo que hay en Drive; `--reintentar ID [--aplicar]` vuelve a enviar un trabajo en error.
+- `python xd.py kaggle-pesos [--pesos RUTA] [--aplicar]`: sube `sam3.pt` + SAM License como dataset **privado**
+  `<KAGGLE_USUARIO>/xd-pesos` (una cuenta por persona; token en `~/.kaggle/access_token`). El `--aplicar` lo corre la persona.
 - `python xd.py reiniciar-motor [--precalentar --proyecto N]`, `python xd.py archivar ARCHIVO [--aplicar]` (asist_*, lote_p* o dataset_p*).
 - `motor/corregir_pares.py` (manual, en el contenedor): corrige pares de clases confundidas; lo consume `exportar_yolo --correcciones`.
 - `herramientas/`: `inventario.ps1` (que datos hay), `limpiar.ps1` (vaciar datos, con reporte; `-Aplicar` borra) y

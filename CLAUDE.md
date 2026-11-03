@@ -6,6 +6,8 @@ Lee primero: `README.md` (que es y como se usa), el contexto del piloto (vive fu
 ## Mapa del codigo
 - `xd.py`: CLI, fuente de verdad de cada paso. `ui.py`: servidor (biblioteca estandar), lista blanca `ACCIONES`,
   un trabajo a la vez. `tablero.py`: SOLO lectura. `cuadernos.py`: limpieza y comparacion de cuadernos.
+  `transporte.py`: carpetas por tipo + enviar/traer/archivar (Drive; Kaggle). `kaggle_xd.py`: CLI de Kaggle (nunca
+  lee ni imprime el token; datasets siempre privados).
 - `motor/` (contenedor, montado en /app): servicio (`_wsgi.py`, `model.py`, `cola.py`, `interactivo.py`, `config.py`),
   proyectos (`spec.py`, `generar.py`, `crear_proyecto.py`, `borrar_proyecto.py`, `sincronizar.py`, `plan.py`),
   datos (`muestra`, `diagnostico`, `correccion`, `registro`, `hijo`, `lote`, `exportar_*`, `importar_lote`,

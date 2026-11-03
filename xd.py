@@ -236,7 +236,7 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte")
+              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -576,6 +576,48 @@ def cmd_modelos(a):
 
 def cmd_aceptacion(a):
     return en_motor("medir_aceptacion.py", a.proyecto, *(["--versiones", a.versiones] if a.versiones else []))[0]
+
+def cmd_kaggle_pesos(a):
+    """P.2.6: sube sam3.pt + SAM License como dataset PRIVADO <usuario>/xd-pesos (una vez; version si cambia)."""
+    import kaggle_xd as K
+    u = K.usuario(ENV)
+    cred = K.credencial()
+    pesos = Path(a.pesos) if a.pesos else RAIZ / "sam3.pt"
+    lic = RAIZ / "motor" / "plantillas" / "SAM_LICENSE.txt"
+    dataset = f"{u}/{K.SLUG_PESOS}"
+    if not pesos.is_file():
+        raise SystemExit(f"No existe {pesos} (pidelo al responsable; no va en Git)")
+    print(f"dataset   {dataset} (PRIVADO)")
+    print(f"pesos     {pesos} ({pesos.stat().st_size / 1e9:.2f} GB)")
+    print(f"licencia  {lic.name} -> LICENSE_SAM.txt (obligatoria al distribuir los pesos)")
+    print(f"credencial {cred or 'NO HAY: guarda tu API token en ~/.kaggle/access_token'}")
+    if not cred:
+        if a.aplicar:
+            raise SystemExit("Sin credencial de Kaggle no se puede subir")
+        print("SOLO REPORTE")
+        return 0
+    existe = K.estado_dataset(dataset)
+    print(f"en Kaggle {'existe (' + existe + '): se sube una VERSION nueva' if existe else 'no existe: se CREA'}")
+    if not a.aplicar:
+        print("SOLO REPORTE: usa --aplicar (calcula el sha256, arma la carpeta y sube; tarda segun tu conexion)")
+        return 0
+    carpeta = RAIZ / "datos" / "kaggle" / K.SLUG_PESOS
+    t0 = time.time()
+    info = K.armar_pesos(pesos, lic, carpeta, u)
+    print(f"sha256 {info['sha256']} | {info['modo']} en {carpeta} | {time.time() - t0:.0f} s")
+    t0 = time.time()
+    try:
+        rc, out = K.subir(carpeta, bool(existe), f"sam3.pt sha256 {info['sha256'][:12]}")
+        print(K.ocultar(out)[-2000:])                    # segunda barrera: nada con forma de token a la consola
+        if rc:
+            raise SystemExit(f"la subida fallo (rc {rc})")
+        subida = time.time() - t0
+        listo = K.esperar_listo(dataset)
+        print(f"OK {dataset}: subida {subida:.0f} s | disponible {'tras ' + str(listo) + ' s mas' if listo is not None else 'NO (revisa en kaggle.com)'}")
+    finally:
+        shutil.rmtree(carpeta, ignore_errors=True)       # el enlace duro no borra el original
+    return 0
+
 
 def cmd_ver(a):
     args = [sys.executable, str(RAIZ / "ver_cajas.py"), str(a.proyecto), "--camara", str(a.camara),
@@ -1035,6 +1077,10 @@ def main():
     p.add_argument("proyecto", type=int)
     p.add_argument("--versiones", default="", help="comparar varias (coma); defecto: model_version del proyecto")
     p.set_defaults(f=cmd_aceptacion)
+    p = sub.add_parser("kaggle-pesos", help="sube sam3.pt + SAM License como dataset privado de Kaggle (P.2.6)")
+    p.add_argument("--pesos", default="", help="ruta de sam3.pt (defecto: la raiz del repo)")
+    p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta (lo corre la persona, no un agente)")
+    p.set_defaults(f=cmd_kaggle_pesos)
     p = sub.add_parser("ver", help="prueba en vivo con webcam del modelo registrado (activo o --modelo)")
     p.add_argument("proyecto", type=int)
     p.add_argument("--modelo", default="")
