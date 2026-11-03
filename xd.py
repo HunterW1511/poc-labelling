@@ -222,8 +222,12 @@ def cmd_lote_importar(a):
     return 0
 
 
+ENTRENAMIENTO = ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo")   # P.2.3: viajan en trabajo.json
+
+
 def cmd_dataset(a):
-    rc, out = en_motor("exportar_yolo.py", a.proyecto, "--formato", a.formato, "--val", a.val, *(["--correcciones", a.correcciones] if a.correcciones else []))
+    extra = [x for k in ENTRENAMIENTO for x in ((f"--{k.replace('_', '-')}", getattr(a, k, "")) if getattr(a, k, "") else ())]
+    rc, out = en_motor("exportar_yolo.py", a.proyecto, "--formato", a.formato, "--val", a.val, *(["--correcciones", a.correcciones] if a.correcciones else []), *extra)
     if rc:
         return rc
     m = re.search(r"OK -> (\S+\.zip)", out)
@@ -239,7 +243,7 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos")
+              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -961,6 +965,9 @@ def main():
     p.add_argument("--val", type=float, default=0.2)
     p.add_argument("--drive", action="store_true", help="copiar el zip a la carpeta datasets de Drive")
     p.add_argument("--correcciones", default="", help="'ultimo' o archivo de motor/correcciones")
+    for k, ayuda in (("modelo", "yolo11n.pt / yolo11n-seg.pt"), ("imgsz", "960"), ("epochs", "100"), ("patience", "30"),
+                     ("batch", "16"), ("conf_conteo", "0.25: umbral del KPI de conteo")):
+        p.add_argument("--" + k.replace("_", "-"), default="", help=f"entrenamiento en el worker (defecto {ayuda})")
     p.set_defaults(f=cmd_dataset)
 
     p = sub.add_parser("test", help="corre todos los tests (host + contenedor); rc 0 solo si todos pasan")

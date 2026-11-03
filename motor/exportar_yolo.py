@@ -1,5 +1,6 @@
 """D.3: exporta las anotaciones (Submit) de un proyecto a YOLO para entrenar en Colab.
 Uso (en el contenedor): python /app/exportar_yolo.py <proyecto> [--formato det|seg|ambos] [--val 0.2]
+       [--modelo M] [--imgsz N] [--epochs N] [--patience N] [--batch N] [--conf-conteo X]   (P.2.3: van en trabajo.json)
 Poligonos = fuente de verdad; las cajas se derivan. Se ignoran los clics (keypointlabels) y los Skip."""
 import argparse, datetime, hashlib, json, zipfile
 import xml.etree.ElementTree as ET
@@ -11,6 +12,8 @@ import requests
 from cola import HEADERS, LS_URL, get_local_path
 from config import DATASETS, DATOS
 from perfil import leer_perfil
+from entrenar import DEFECTOS, parametros
+from worker import encabezado
 
 APP = Path(__file__).resolve().parent
 
@@ -99,7 +102,14 @@ def main():
     ap.add_argument("--formato", choices=["det", "seg", "ambos"], default="det")
     ap.add_argument("--val", type=float, default=0.2)
     ap.add_argument("--correcciones", default="", help="archivo de corregir_pares.py o 'ultimo'")
+    for k in ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo"):      # parametros del entrenamiento
+        ap.add_argument("--" + k.replace("_", "-"), default="", help=f"entrenamiento (defecto {DEFECTOS[k] or 'yolo11n'})")
     a = ap.parse_args()
+    try:                                     # se valida ANTES de exportar: un error no deja un zip inutil
+        params = parametros({"formato": "seg" if a.formato == "seg" else "det",
+                             **{k: getattr(a, k) for k in ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo")}})
+    except ValueError as e:
+        raise SystemExit(f"parametros de entrenamiento: {e}")
     corr = cargar_correcciones(a.correcciones, a.proyecto)
 
     r = requests.get(f"{LS_URL}/api/projects/{a.proyecto}", headers=HEADERS, timeout=30)
@@ -143,6 +153,10 @@ def main():
                "".join(f"  {i}: {nm}\n" for i, nm in enumerate(names))
         for f in formatos:
             z.writestr(f"{f}/data.yaml", yaml)
+        for c in ("worker.py", "entrenar.py"):
+            z.write(APP / c, f"codigo/{c}")
+        z.writestr("trabajo.json", json.dumps(encabezado("entrenamiento", zp.stem, proyecto=a.proyecto, parametros=params),
+                                              ensure_ascii=True, indent=1))
         z.writestr("resumen.json", json.dumps({"proyecto": a.proyecto, "clases": names, "imagenes": dict(n),
                                                "instancias": {k: dict(v) for k, v in por_clase.items()}, "correcciones": a.correcciones or None, "n_correcciones": n_corr},
                                               ensure_ascii=True, indent=1))
@@ -155,6 +169,7 @@ def main():
         print("AVISO: val vacio; etiqueta mas fotos o sube --val")
     if corr:
         print(f"Correcciones aplicadas: {n_corr}/{len(corr)}")
+    print(f"Entrenamiento: {params}")
     print(f"OK -> {zp} ({zp.stat().st_size / 1e6:.1f} MB)")
 
 

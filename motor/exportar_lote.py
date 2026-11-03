@@ -15,9 +15,10 @@ from config import LOTES
 from muestra import carpeta_de, muestra_estratificada
 from perfil import leer_perfil, limites_por_clase
 from version import version_hijo, version_modelo
+from worker import encabezado
 
 APP = Path(__file__).resolve().parent
-CODIGO = ["reglas.py", "pipeline.py", "hijo.py", "lote.py"]
+CODIGO = ["reglas.py", "pipeline.py", "hijo.py", "lote.py", "worker.py"]
 MODELOS = Path(getattr(config, "MODELOS", Path(config.DATOS) / "modelos"))
 
 
@@ -125,6 +126,8 @@ def main():
             meta["hijo"] = {"nombre": hijo[0], "archivo": "modelo/best.pt", "conf": a.hijo_conf, "imgsz": hijo[2]}
             meta["limites"] = limites_por_clase(cfg)
         z.writestr("manifiesto.json", json.dumps(meta, ensure_ascii=True, indent=1))
+        z.writestr("trabajo.json", json.dumps(encabezado("preetiquetado", zp.stem, proyecto=a.proyecto,
+                                                         creado=meta["creado"]), ensure_ascii=True, indent=1))
     print(f"OK {len(man)} tareas | modo {modo} | version {ver} | {zp.stat().st_size / 1e6:.1f} MB -> {zp}")
 
 

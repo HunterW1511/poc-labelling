@@ -5,10 +5,12 @@ import copy, json, re, time, zipfile
 from pathlib import Path
 
 import spec
+import worker
 
 ESQUEMA_TRABAJO = 1
 PREFIJO = "asist_"
-MODULOS = ("spec.py", "perfil.py", "colores.py", "esquema_llm.py", "asistente.py", "llm_ollama.py", "trabajo.py")
+MODULOS = ("spec.py", "perfil.py", "colores.py", "esquema_llm.py", "asistente.py", "llm_ollama.py", "trabajo.py",
+           "worker.py")
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".ogg", ".flac", ".webm", ".mp4", ".aac", ".opus"}
 MODELO_LLM, MODELO_STT, IDIOMA = "qwen2.5:14b", "large-v3-turbo", "es"
 
@@ -47,6 +49,8 @@ def armar(motor, destino, slug, texto="", audio=None, vocabulario=(), respuestas
         for m in MODULOS:
             z.write(motor / m, f"codigo/{m}")
         z.writestr("entrada.json", json.dumps(entrada, ensure_ascii=True, indent=1))
+        z.writestr("trabajo.json", json.dumps(worker.encabezado("asistente", nombre, slug=slug, creado=entrada["creado"]),
+                                              ensure_ascii=True, indent=1))
         if audio:
             z.write(audio, entrada["audio"])
     tmp.replace(zp)                                  # el notebook nunca ve un zip a medias
