@@ -67,6 +67,9 @@ Con el worker, la cola semantica local (`cola.py`) queda solo como respaldo.
 - No retocar el prompt del LLM 14B a ciegas: medir con el banco; preferir arreglos deterministas.
 
 ## Preguntas abiertas
-- [ ] P.6: que maquina hace de hub para el equipo de 5.
-- [ ] P.2: cuenta de Kaggle de equipo o por persona (revisar condiciones).
+- [x] P.6 (03/11/2026): el hub es la laptop i7-7600U. Consecuencias: todo lo pesado va a Kaggle (asistente,
+  semantico, precodificacion, entrenamiento); el hub sin backbone (P.3) pasa a prioridad alta; la laptop debe estar
+  encendida y en la red cuando el equipo trabaje; Docker con 11 GB.
+- [x] P.2 (03/11/2026): cuenta de Kaggle personal. Una sola cuota semanal para los 5 (verificarla en la cuenta);
+  `kaggle.json` solo en el hub, nunca en el repo; revisar las condiciones de uso de Kaggle.
 Las cifras de plataformas (cuotas de Kaggle, ZeroGPU) son del 20/10/2026: verificarlas antes de construir.

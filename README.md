@@ -6,6 +6,7 @@ Cada paso es un comando de `xd.py`; la UI (`ui.py`) solo los muestra y los lanza
 
 Contexto completo, decisiones y ruta al piloto: [docs/contexto.md](docs/contexto.md).
 Reglas para agentes (Claude Code, Kiro): [CLAUDE.md](CLAUDE.md).
+Manual de uso paso a paso: [docs/manual.md](docs/manual.md).
 
 ## Arquitectura
 
