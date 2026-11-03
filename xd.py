@@ -132,9 +132,10 @@ def cmd_reiniciar_motor(a):
 def cmd_archivar(a):
     """Mueve un trabajo en espera de Drive a _archivo/ (la lanzadora de Colab ya no lo procesa). No borra nada."""
     nombre = Path(a.archivo).name
-    if nombre != a.archivo or not re.fullmatch(r"(asist_.+|lote_p\d+_.+)\.zip", nombre):
-        raise SystemExit(f"{a.archivo!r}: solo un nombre asist_*.zip o lote_p*.zip, sin carpeta")
-    dirs = [_buzon(), _drive()]
+    if nombre != a.archivo or not re.fullmatch(r"(asist_.+|lote_p\d+_.+|dataset_p\d+_.+)\.zip", nombre):
+        raise SystemExit(f"{a.archivo!r}: solo un nombre asist_*.zip, lote_p*.zip o dataset_p*.zip, sin carpeta")
+    tipo = "asistente" if nombre.startswith("asist_") else "preetiquetado" if nombre.startswith("lote_") else "entrenamiento"
+    dirs = [_buzon(), _drive(), Path(ENV.get("DATASETS_DRIVE") or _drive().parent / "datasets")]
     f = next((d / nombre for d in dirs if (d / nombre).is_file()), None)
     if not f:
         raise SystemExit(f"No encuentro {nombre} en {[str(d) for d in dirs]}")
@@ -146,6 +147,7 @@ def cmd_archivar(a):
     dest.parent.mkdir(exist_ok=True)
     shutil.move(str(f), str(dest))
     print("OK archivado")
+    _en_cola(nombre, _q_archivar, tipo, nombre)
     return 0
 
 
@@ -160,8 +162,10 @@ def cmd_lote_exportar(a):
     if not m:
         raise SystemExit("No encontre la ruta del zip en la salida de exportar_lote.py")
     zp = LOTES_LOCAL / PurePosixPath(m.group(1)).name
+    _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto)
     shutil.copy2(zp, drive)
     print(f"Copiado a Drive: {drive / zp.name}")
+    _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
     print("Siguiente: en Colab corre la celda 2; luego  python xd.py lote-importar")
     return 0
 
@@ -206,10 +210,15 @@ def cmd_lote_importar(a):
     for f in nuevos:
         destino = LOTES_LOCAL / f.name
         shutil.copy2(f, destino)
-        rc, _ = en_motor("importar_lote.py", f.name, *(["--sufijo", a.sufijo] if a.sufijo else []), *(["--fijar-version"] if a.fijar_version else []))
+        rc, out = en_motor("importar_lote.py", f.name, *(["--sufijo", a.sufijo] if a.sufijo else []), *(["--fijar-version"] if a.fijar_version else []))
+        zp = f.name[:-len("_pred.json")] + ".zip"
+        m = re.match(r"^lote_p(\d+)_", f.name)
+        n = int(m.group(1)) if m else None
         if rc:
             destino.unlink(missing_ok=True)         # permite reintentar
+            _en_cola(zp, _q_fallo, "preetiquetado", zp, f.name, f"importar_lote.py rc {rc}: {out[-500:]}", proyecto=n)
             raise SystemExit(f"importar fallo: {f.name}")
+        _en_cola(zp, _q_importado, "preetiquetado", zp, f.name, proyecto=n)
     return 0
 
 
@@ -222,13 +231,15 @@ def cmd_dataset(a):
         d = Path(ENV.get("DATASETS_DRIVE") or _drive().parent / "datasets")
         d.mkdir(parents=True, exist_ok=True)
         zp = RAIZ / "motor" / "datasets" / PurePosixPath(m.group(1)).name
+        _en_cola(zp.name, _q_crear, "entrenamiento", zp.name, "pendiente", proyecto=a.proyecto)
         shutil.copy2(zp, d)
         print(f"Copiado a Drive: {d / zp.name}")
+        _en_cola(zp.name, _q_enviado, "entrenamiento", zp.name)
     return 0
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver", "cola_trabajos")
+              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -532,6 +543,8 @@ def cmd_registrar(a):
         shutil.copy2(met_f, dest / "metricas.json")
     _guardar(f, nuevo)
     print(f"OK registrado {nombre} -> {f}")
+    if a.run:
+        _en_cola(r.name, _q_registrar, int(a.proyecto), r.name)
     return 0
 
 
@@ -603,6 +616,9 @@ def cmd_asistente(a):
     except ValueError as x:
         raise SystemExit(str(x))
     print(f"Trabajo -> {zp}")
+    _en_cola(zp.name, _q_crear, "asistente", zp.name, "enviado", slug=a.slug)
+    if a.continuar:
+        _en_cola(zp.name, _q_reemplazar, a.slug, zp.name)
     print(f"  audio: {e['audio'] or 'no'} | texto: {len(e['texto'])} car. | vocabulario: {e['vocabulario'] or 'no'}"
           f" | respuestas: {'si' if e['respuestas'] else 'no'} | previa: {'si' if previa else 'no'} | {e['modelo_llm']}")
     print("Siguiente: en Colab corre asistente.ipynb (celda 2); luego  python xd.py asistente-importar " + a.slug)
@@ -657,6 +673,7 @@ def cmd_asistente_importar(a):
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text(json.dumps(s, ensure_ascii=True, indent=1) + "\n", encoding="utf-8")
     print(f"OK spec -> {ruta}")
+    _en_cola(res["trabajo"], _q_importado, "asistente", res["trabajo"] + ".zip", f.name, slug=slug)
     print(f"Siguiente:  python xd.py crear-proyecto {slug}")
     return 0
 
@@ -672,6 +689,94 @@ def _cola(crear=True):
     if not crear and not TRABAJOS_DB.exists():
         return None
     return _cola_mod().abrir(TRABAJOS_DB)
+
+
+def _en_cola(que, op, *args, **kw):
+    """Registra en la cola; si falla, avisa y sigue: la cola nunca rompe un paso que ya funciono."""
+    try:
+        con = _cola()
+        try:
+            return op(_cola_mod(), con, *args, **kw)
+        finally:
+            con.close()
+    except Exception as e:
+        print(f"AVISO cola: no pude registrar {que} ({type(e).__name__}: {e}); "
+              "corre  python xd.py trabajos --reconciliar")
+        return None
+
+
+def _q_aviso(t, texto):
+    print(f"AVISO cola: trabajo {t['id']} ({t['archivo']}) esta en {t['estado']}: {texto}")
+
+
+def _q_crear(C, con, tipo, archivo, estado, proyecto=None, slug=None):
+    t, nuevo = C.crear(con, tipo, archivo, proyecto=proyecto, slug=slug, estado=estado)
+    if not nuevo and estado == "enviado" and t["estado"] == "pendiente":
+        t = C.mover(con, t["id"], "enviado")
+    return t
+
+
+def _q_enviado(C, con, tipo, archivo):
+    t = C.buscar(con, tipo, archivo)
+    if t and t["estado"] == "pendiente":
+        return C.mover(con, t["id"], "enviado")
+    return t
+
+
+def _q_listo(C, con, tipo, archivo, resultado, proyecto=None, slug=None, detalle="registrado al importar"):
+    """Lleva el trabajo hasta listo (creandolo si no estaba). -> trabajo, o None si ya termino."""
+    t = C.buscar(con, tipo, archivo)
+    if t is None:
+        t, _ = C.crear(con, tipo, archivo, proyecto=proyecto, slug=slug, estado="enviado", detalle=detalle)
+    if t["estado"] == "pendiente":
+        t = C.mover(con, t["id"], "enviado", detalle=detalle)
+    if t["estado"] in ("enviado", "en_proceso"):
+        t = C.mover(con, t["id"], "listo", resultado=resultado, detalle=detalle)
+    if t["estado"] != "listo":
+        if t["estado"] != "importado":
+            _q_aviso(t, "no se marca como importado")
+        return None
+    return t
+
+
+def _q_importado(C, con, tipo, archivo, resultado, proyecto=None, slug=None):
+    t = _q_listo(C, con, tipo, archivo, resultado, proyecto, slug)
+    return C.mover(con, t["id"], "importado", desde="listo", resultado=resultado) if t else None
+
+
+def _q_fallo(C, con, tipo, archivo, resultado, detalle, proyecto=None):
+    t = _q_listo(C, con, tipo, archivo, resultado, proyecto)
+    return C.fallo(con, t["id"], detalle) if t else None
+
+
+def _q_archivar(C, con, tipo, archivo, detalle="archivado a mano"):
+    t = C.buscar(con, tipo, archivo)
+    if t is None:
+        t, _ = C.crear(con, tipo, archivo, estado="enviado", detalle="registrado al archivar")
+    if "archivado" in C.TRANSICIONES[t["estado"]]:
+        return C.mover(con, t["id"], "archivado", detalle=detalle)
+    if t["estado"] != "archivado":
+        _q_aviso(t, "no se puede archivar")
+    return t
+
+
+def _q_reemplazar(C, con, slug, nuevo):
+    """asistente --continuar: los resultados listos anteriores del slug quedan archivados (reemplazados)."""
+    for t in C.listar(con, tipo="asistente", slug=slug, estado="listo"):
+        if t["archivo"] != nuevo:
+            C.mover(con, t["id"], "archivado", desde="listo", detalle=f"reemplazado por {nuevo}")
+            print(f"Cola: {t['archivo']} -> archivado (reemplazado)")
+
+
+def _q_registrar(C, con, proyecto, run):
+    """registrar --run: el dataset cuyo stem origino el run (el cuaderno nombra el run stem[_formato])."""
+    ts = [t for t in C.listar(con, tipo="entrenamiento", proyecto=proyecto)
+          if run == t["archivo"][:-4] or run.startswith(t["archivo"][:-4] + "_")]
+    if not ts:
+        print(f"AVISO cola: no encuentro en la cola el dataset del run {run}; corre  python xd.py trabajos --reconciliar")
+        return None
+    t = max(ts, key=lambda x: len(x["archivo"]))
+    return _q_importado(C, con, "entrenamiento", t["archivo"], run, proyecto=proyecto)
 
 
 def _carpetas_transporte():
@@ -717,6 +822,10 @@ def _linea_trabajo(t):
 
 def cmd_trabajos(a):
     C = _cola_mod()
+    if a.reconciliar and a.reintentar:
+        raise SystemExit("Usa --reconciliar o --reintentar, no los dos")
+    if a.reintentar:
+        return _reintentar(C, a)
     if a.reconciliar:
         return _reconciliar(C, a)
     con = _cola(crear=False)
@@ -732,6 +841,41 @@ def cmd_trabajos(a):
         for t in ts:
             print(_linea_trabajo(t))
     return 0
+
+
+def _reintentar(C, a):
+    """error -> pendiente; el _error.txt va a _archivo/ (no se borra) para que Colab lo procese otra vez."""
+    con = _cola(crear=False)
+    try:
+        t = C.obtener(con, a.reintentar) if con else None
+        if t is None:
+            raise SystemExit(f"No existe el trabajo {a.reintentar} en {TRABAJOS_DB}")
+        if t["estado"] != "error":
+            raise SystemExit(f"El trabajo {t['id']} esta en {t['estado']}; solo se reintenta desde error")
+        carpeta = _carpetas_transporte().get(C.CARPETA.get(t["tipo"], ""))
+        if carpeta is None:
+            raise SystemExit(f"No encuentro la carpeta de {t['tipo']} en Drive")
+        err = carpeta / f"{t['archivo'][:-4]}_error.txt"
+        dest = carpeta / "_archivo" / f"{err.stem}_{time.strftime('%Y%m%d-%H%M%S')}.txt"
+        hay_zip = (carpeta / t["archivo"]).is_file()
+        if err.is_file():
+            print(f"{'moviendo' if a.aplicar else 'MOVERIA'} {err} -> {dest}")
+        print(f"trabajo {t['id']}: error -> pendiente" + (" -> enviado (el zip sigue en Drive)" if hay_zip else
+              f"; AVISO: {t['archivo']} ya no esta en {carpeta}, se queda pendiente"))
+        if not a.aplicar:
+            print("SOLO REPORTE: usa --aplicar para reintentar")
+            return 0
+        if err.is_file():
+            dest.parent.mkdir(exist_ok=True)
+            shutil.move(str(err), str(dest))
+        t = C.mover(con, t["id"], "pendiente", desde="error", detalle="reintento")
+        if hay_zip:
+            t = C.mover(con, t["id"], "enviado", desde="pendiente", detalle="reintento")
+        print(f"OK trabajo {t['id']} en {t['estado']} (intento {t['intentos']})")
+        return 0
+    finally:
+        if con:
+            con.close()
 
 
 def _reconciliar(C, a):
@@ -785,7 +929,7 @@ def main():
     p.add_argument("--forzar", action="store_true", help="reiniciar aunque haya trabajo en la cola")
     p.set_defaults(f=cmd_reiniciar_motor)
     p = sub.add_parser("archivar", help="mueve un zip en espera de Drive a _archivo (Colab ya no lo procesa)")
-    p.add_argument("archivo", help="nombre del zip: asist_*.zip o lote_p*.zip")
+    p.add_argument("archivo", help="nombre del zip: asist_*.zip, lote_p*.zip o dataset_p*.zip")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_archivar)
     p = sub.add_parser("lote-exportar", help="exporta tareas pendientes a un zip y lo copia a Drive")
@@ -914,6 +1058,7 @@ def main():
     p.add_argument("--estado", default="", help="filtra por estado (incluye terminados)")
     p.add_argument("--todos", action="store_true", help="incluye importados y archivados")
     p.add_argument("--reconciliar", action="store_true", help="avanza estados segun los archivos de Drive y adopta huerfanos")
+    p.add_argument("--reintentar", type=int, default=0, metavar="ID", help="vuelve a enviar un trabajo en error")
     p.add_argument("--horas", type=float, default=24, help="aviso si un trabajo lleva mas de estas horas enviado")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_trabajos)

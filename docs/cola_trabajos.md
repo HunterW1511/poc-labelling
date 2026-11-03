@@ -90,8 +90,8 @@ Reglas:
 | -> `pendiente` / `enviado` | `asistente` | `lote-exportar` (pendiente al crear el zip, enviado al copiarlo) | `dataset --drive` (igual) |
 | `enviado` -> `listo` / `error` | reconciliacion: `_resultado.json` / `_error.txt` | reconciliacion: `_pred.json` | reconciliacion: `metricas.json` del run |
 | `listo` -> `importado` | `asistente-importar --aplicar` | `lote-importar` | `registrar --aplicar` |
-| -> `archivado` | `archivar`, `asistente --continuar` | `archivar` | `archivar` (hoy no acepta `dataset_p*`; se amplia en P.1.4) |
-| `error` -> `pendiente` | reintento explicito (P.1.3) | igual | igual |
+| -> `archivado` | `archivar`, `asistente --continuar` | `archivar` | `archivar` (acepta `dataset_p*` desde P.1.4) |
+| `error` -> `pendiente` | `trabajos --reintentar ID` (mueve el `_error.txt` a `_archivo/`; vuelve a `enviado` si el zip sigue en Drive) | igual | igual |
 
 La **reconciliacion** (`xd.py trabajos --reconciliar`, P.1.3) es el unico lugar que mira archivos en Drive: avanza
 `enviado -> listo/error`, reporta huerfanos (archivos sin fila, por ejemplo de antes de P.1) y trabajos que llevan
