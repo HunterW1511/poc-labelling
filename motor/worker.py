@@ -13,7 +13,7 @@ ORDEN = ("preetiquetado-sam3", "preetiquetado-hijo", "precodificacion", "entrena
 
 
 def _ahora():
-    return time.strftime("%Y-%m-%dT%H:%M:%S")
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")      # con zona: Colab y Kaggle corren en UTC
 
 
 def escribir(ruta, texto):

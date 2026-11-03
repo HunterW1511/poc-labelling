@@ -76,14 +76,10 @@ def en_motor(script, *args):
     return p.wait(), "".join(salida)
 
 
-def _drive():
-    d = ENV.get("LOTES_DRIVE")
-    if not d:
-        raise SystemExit("Falta LOTES_DRIVE en .env (carpeta de lotes sincronizada con Drive)")
-    d = Path(d)
-    if not d.is_dir():
-        raise SystemExit(f"No encuentro {d} (revisa Google Drive para escritorio)")
-    return d
+def _transporte():
+    """P.2.5: transporte segun TRANSPORTE del .env (Drive por defecto). Se lee cada vez (los tests cambian ENV)."""
+    import transporte
+    return transporte.elegir(ENV, RAIZ)
 
 
 # ----------------------------------------------------------------- comandos
@@ -135,24 +131,24 @@ def cmd_archivar(a):
     if nombre != a.archivo or not re.fullmatch(r"(asist_.+|lote_p\d+_.+|dataset_p\d+_.+)\.zip", nombre):
         raise SystemExit(f"{a.archivo!r}: solo un nombre asist_*.zip, lote_p*.zip o dataset_p*.zip, sin carpeta")
     tipo = "asistente" if nombre.startswith("asist_") else "preetiquetado" if nombre.startswith("lote_") else "entrenamiento"
-    dirs = [_buzon(), _drive(), Path(ENV.get("DATASETS_DRIVE") or _drive().parent / "datasets")]
-    f = next((d / nombre for d in dirs if (d / nombre).is_file()), None)
-    if not f:
-        raise SystemExit(f"No encuentro {nombre} en {[str(d) for d in dirs]}")
-    dest = f.parent / "_archivo" / nombre
-    print(f"{'moviendo' if a.aplicar else 'MOVERIA'} {f} -> {dest}")
+    import transporte
+    T, c = _transporte(), transporte.carpeta_de(nombre)
+    d = T.requerir(c)
+    if not (d / nombre).is_file():
+        raise SystemExit(f"No encuentro {nombre} en {d}")
+    print(f"{'moviendo' if a.aplicar else 'MOVERIA'} {d / nombre} -> {d / '_archivo' / nombre}")
     if not a.aplicar:
         print("SOLO REPORTE: usa --aplicar para archivar")
         return 0
-    dest.parent.mkdir(exist_ok=True)
-    shutil.move(str(f), str(dest))
+    T.archivar(c, nombre)
     print("OK archivado")
     _en_cola(nombre, _q_archivar, tipo, nombre)
     return 0
 
 
 def cmd_lote_exportar(a):
-    drive = _drive()
+    T = _transporte()
+    T.requerir("lotes")                             # antes de exportar: sin transporte no hay a donde enviar
     args = [a.proyecto] + (["--limite", a.limite] if a.limite else []) + \
            (["--tareas", a.tareas] if a.tareas else []) + (["--todas"] if a.todas else []) + list(getattr(a, "extra", [])) + (["--modo", a.modo] if getattr(a, "modo", "") else [])
     rc, out = en_motor("exportar_lote.py", *args)
@@ -163,8 +159,7 @@ def cmd_lote_exportar(a):
         raise SystemExit("No encontre la ruta del zip en la salida de exportar_lote.py")
     zp = LOTES_LOCAL / PurePosixPath(m.group(1)).name
     _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto)
-    shutil.copy2(zp, drive)
-    print(f"Copiado a Drive: {drive / zp.name}")
+    print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
     _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
     print("Siguiente: en Colab corre worker.ipynb (celda 2); luego Reconciliar y  python xd.py lote-importar")
     return 0
@@ -201,7 +196,7 @@ def cmd_preetiquetar(a):
     return cmd_lote_exportar(a)
 
 def cmd_lote_importar(a):
-    drive = _drive()
+    drive = _transporte().requerir("lotes")
     LOTES_LOCAL.mkdir(parents=True, exist_ok=True)
     nuevos = sorted(f for f in drive.glob("*_pred.json") if not (LOTES_LOCAL / f.name).exists())
     if not nuevos:
@@ -232,18 +227,16 @@ def cmd_dataset(a):
         return rc
     m = re.search(r"OK -> (\S+\.zip)", out)
     if a.drive and m:
-        d = Path(ENV.get("DATASETS_DRIVE") or _drive().parent / "datasets")
-        d.mkdir(parents=True, exist_ok=True)
+        T = _transporte()
         zp = RAIZ / "motor" / "datasets" / PurePosixPath(m.group(1)).name
         _en_cola(zp.name, _q_crear, "entrenamiento", zp.name, "pendiente", proyecto=a.proyecto)
-        shutil.copy2(zp, d)
-        print(f"Copiado a Drive: {d / zp.name}")
+        print(f"Enviado ({T.nombre}): {T.enviar('datasets', zp)}")
         _en_cola(zp.name, _q_enviado, "entrenamiento", zp.name)
     return 0
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker")
+              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -505,7 +498,7 @@ def _guardar(f, reg):
 
 
 def _run(valor, proyecto):
-    runs = Path(ENV.get("RUNS_DRIVE") or _drive().parent / "runs")
+    runs = _transporte().requerir("runs")
     if valor == "ultimo":
         cands = [r for r in runs.glob(f"dataset_p{proyecto}_*") if (r / "weights" / "metricas.json").exists()]
         if not cands:
@@ -592,9 +585,7 @@ def cmd_ver(a):
 
 # ----------------------------------------------------------------- asistente (etapa C)
 def _buzon():
-    d = Path(ENV.get("ASISTENTE_DRIVE") or _drive().parent / "asistente")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return _transporte().requerir("asistente", crear=True)
 
 
 def _texto_o_archivo(v):
@@ -794,14 +785,8 @@ def _q_registrar(C, con, proyecto, run):
 
 
 def _carpetas_transporte():
-    """Carpetas de Drive por tipo (None si no existen). No crea nada."""
-    d = ENV.get("LOTES_DRIVE")
-    lotes = Path(d) if d and Path(d).is_dir() else None
-    def carpeta(var, sub):
-        p = Path(ENV[var]) if ENV.get(var) else (lotes.parent / sub if lotes else None)
-        return p if p and p.is_dir() else None
-    return {"asistente": carpeta("ASISTENTE_DRIVE", "asistente"), "lotes": lotes,
-            "datasets": carpeta("DATASETS_DRIVE", "datasets"), "runs": carpeta("RUNS_DRIVE", "runs")}
+    """Carpetas locales del transporte por tipo (None si no estan). No crea nada."""
+    return _transporte().carpetas()
 
 
 def _archivos_transporte(c):
@@ -866,9 +851,10 @@ def _reintentar(C, a):
             raise SystemExit(f"No existe el trabajo {a.reintentar} en {TRABAJOS_DB}")
         if t["estado"] != "error":
             raise SystemExit(f"El trabajo {t['id']} esta en {t['estado']}; solo se reintenta desde error")
-        carpeta = _carpetas_transporte().get(C.CARPETA.get(t["tipo"], ""))
+        T, c = _transporte(), C.CARPETA.get(t["tipo"], "")
+        carpeta = T.carpeta(c) if c else None
         if carpeta is None:
-            raise SystemExit(f"No encuentro la carpeta de {t['tipo']} en Drive")
+            raise SystemExit(f"No encuentro la carpeta de {t['tipo']} en el transporte ({T.nombre})")
         stem, sello = t["archivo"][:-4], time.strftime("%Y%m%d-%H%M%S")
         # el _error.txt y el .estado.json (P.2.4: el worker se salta lo que ya tiene estado) van a _archivo/
         mover = [(f, carpeta / "_archivo" / f"{f.name[:-len(suf)]}_{sello}{suf}")
@@ -883,8 +869,7 @@ def _reintentar(C, a):
             print("SOLO REPORTE: usa --aplicar para reintentar")
             return 0
         for f, dest in mover:
-            dest.parent.mkdir(exist_ok=True)
-            shutil.move(str(f), str(dest))
+            T.archivar(c, f.name, dest.name)
         t = C.mover(con, t["id"], "pendiente", desde="error", detalle="reintento")
         if hay_zip:
             t = C.mover(con, t["id"], "enviado", desde="pendiente", detalle="reintento")

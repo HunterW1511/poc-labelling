@@ -41,8 +41,11 @@ def servicios():
 
 
 def _drive():
-    d = xd.ENV.get("LOTES_DRIVE")
-    return Path(d) if d and Path(d).is_dir() else None
+    """Carpeta de lotes del transporte (None si no esta): sin ella no hay lotes, runs ni asistente."""
+    try:
+        return xd._transporte().carpeta("lotes")
+    except SystemExit:
+        return None
 
 
 def vista():
@@ -213,8 +216,10 @@ def proyecto_de(slug):
     return next((p["id"] for p in lista if titulo and p.get("title") == titulo), None)
 
 def _buzon_dir(drive):
-    bz = Path(xd.ENV.get("ASISTENTE_DRIVE") or (drive.parent / "asistente" if drive else ""))
-    return bz if str(bz) not in ("", ".") and bz.is_dir() else None
+    try:
+        return xd._transporte().carpeta("asistente") if drive else None
+    except SystemExit:
+        return None
 
 
 def asistente_detalle(slug):
@@ -224,7 +229,7 @@ def asistente_detalle(slug):
     ruta = PROYECTOS / slug / "spec.json"
     out = {"slug": slug, "spec_existe": ruta.exists(), "estado": _asistente(vista(), slug) if bz else None}
     if not bz:
-        out["error"] = "No encuentro el buzon del asistente en Drive (ASISTENTE_DRIVE o LOTES_DRIVE)"
+        out["error"] = "No encuentro el buzon del asistente en el transporte (en Drive: ASISTENTE_DRIVE o LOTES_DRIVE)"
         return out
     st = out["estado"] or {}
     if st.get("ultimo") == "error" and (bz / st["trabajo"]).is_file():
@@ -325,7 +330,7 @@ def proyectos():
     lista = (lista.get("results") if isinstance(lista, dict) else lista) or []
     ls = {p["id"]: p for p in lista if isinstance(p, dict) and "id" in p}
     if not _drive():
-        avisos.append("No encuentro LOTES_DRIVE (Google Drive para escritorio): sin lotes, runs ni asistente")
+        avisos.append("No encuentro la carpeta de lotes del transporte (en Drive: LOTES_DRIVE): sin lotes, runs ni asistente")
     v = vista()
     lts = lotes(v)
     slugs = {d.name for d in PROYECTOS.iterdir() if d.is_dir()} if PROYECTOS.is_dir() else set()
