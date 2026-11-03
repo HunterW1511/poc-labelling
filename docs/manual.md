@@ -36,7 +36,11 @@ Opcion B, sin asistente:
 
 ### 2.3 Tomar las fotos
 1. **Plan de captura** (`plan SLUG`): cuantas fotos por carpeta y que variar (posicion, rotacion, distancia, luz).
-2. **Capturar fotos** (`python capturar.py SLUG`) con la webcam, o copia las fotos a las carpetas a mano.
+2. **Capturar fotos** (`python capturar.py SLUG [--carpeta NOMBRE] [--total N]`) con la webcam, o copia las fotos
+   a las carpetas a mano. La ventana muestra la carpeta actual, cuantas llevas de la meta y que variar (cambia cada
+   5 fotos). Empieza en la primera carpeta incompleta y, al cumplir la meta, sugiere la siguiente.
+   Teclas: `espacio` guarda (la foto original, sin la barra), `n` / `p` carpeta siguiente / anterior,
+   `g` cuadricula de tercios, `z` deshace la ultima, `q` sale. Al salir imprime el resumen por carpeta.
 3. **Sincronizar fotos** (`sincronizar SLUG`): Label Studio crea una tarea por foto.
 
 La carpeta de tipo negativo es fondo SIN objetos. Nunca personas al fondo de ninguna foto.

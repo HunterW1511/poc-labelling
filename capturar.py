@@ -115,9 +115,10 @@ def main():
     cv2.destroyAllWindows()
 
     print(f"\nGuardadas en esta sesion: {len(guardadas)}")
+    w = max(14, *(len(f["carpeta"]) for f in filas))
     for f in filas:
         n = cuentas[f["carpeta"]]
-        print(f"  {f['carpeta']:<14} {n:>4}/{f['fotos']:<4} {'OK' if n >= f['fotos'] else 'faltan ' + str(f['fotos'] - n)}")
+        print(f"  {f['carpeta']:<{w}} {n:>4}/{f['fotos']:<4} {'OK' if n >= f['fotos'] else 'faltan ' + str(f['fotos'] - n)}")
     if guardadas:
         print(f"\nPara que entren a Label Studio:  python xd.py sincronizar {a.slug}")
 
