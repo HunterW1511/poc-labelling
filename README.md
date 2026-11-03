@@ -73,3 +73,8 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
 - `ver`: OpenVINO siempre con `intel:cpu` y exportacion rectangular (L.9). La GPU Intel HD 620 no sirve con
   OpenVINO 2026 (deja `kernel.errors.txt`, ignorado en Git).
 - Tras cambiar codigo de `motor/`: `docker compose restart motor` (gunicorn carga el codigo al arrancar).
+- Si la cola de verdad parece bloqueada (`/estado` sin espera ni carga y sin lineas nuevas en el log), vuelca las pilas
+  de los hilos del motor con py-spy (se pierde al reconstruir la imagen; solo para diagnostico):
+  `docker compose exec -T motor pip install -q py-spy==0.4.0`, luego
+  `docker cp herramientas/volcar_motor.sh ls_motor:/tmp/volcar.sh` y `docker exec --privileged ls_motor sh /tmp/volcar.sh`.
+  Busca los hilos `sam3`, `sam3-int` y `sam3-pre` y en que linea esperan.

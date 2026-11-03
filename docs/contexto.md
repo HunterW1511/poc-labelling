@@ -5,7 +5,7 @@ Actualizado: 31/10/2026 (fin de la limpieza L.0-L.11). Reemplaza al "contexto un
 
 ## Estado
 - Hub en blanco: sin proyectos, fotos, lotes, datasets ni modelos. 17 tests en verde (`python xd.py test`).
-- Repo en GitHub (privado). Token de Label Studio rotado; protecciones de los proyectos 1 y 2 quitadas
+- Repo publico en GitHub (https://github.com/HunterW1511/poc-labelling), licencia MIT. Token de Label Studio rotado; protecciones de los proyectos 1 y 2 quitadas
   (`UI_PROTEGIDOS=` vacio): todos los proyectos son desechables.
 - Equipo: laptop i7-7600U (2 nucleos, 16 GB, sin GPU usable), Docker con 11 GB, Colab T4 gratuito.
 
