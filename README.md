@@ -14,6 +14,7 @@ Manual de uso paso a paso: [docs/manual.md](docs/manual.md).
 | Label Studio 1.23 + Postgres | Docker (`docker-compose.yml`), http://127.0.0.1:8080 | Proyectos, tareas y revision humana. `mis_imagenes/` montada en solo lectura |
 | Motor (`motor/`) | Docker, puerto 9090 | Backend ML: clic interactivo de SAM 3 y cola semantica de respaldo. `GET /estado` dice que esta cargado y por que espera la cola |
 | `xd.py`, `ui.py`, `tablero.py` | Host | CLI (fuente de verdad), UI en http://127.0.0.1:8090 y tablero de solo lectura |
+| Cola de trabajos (`datos/trabajos.sqlite`) | Host (disco local, nunca en Drive) | Estado de cada trabajo externo (asistente, pre-etiquetado, entrenamiento): sobrevive a reinicios; Drive solo transporta. Diseno: [docs/cola_trabajos.md](docs/cola_trabajos.md) |
 | `capturar.py`, `ver_cajas.py` | Host | Webcam: captura de fotos y modelo en vivo (OpenVINO o PyTorch) |
 | Cuadernos (`notebooks/`) | Colab T4 | Asistente (Whisper + qwen2.5:14b), pre-etiquetado de lotes (SAM 3) y entrenamiento (YOLO). Intercambio por Drive para escritorio |
 
@@ -52,7 +53,9 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
 - `python xd.py -h` lista todo; `python xd.py <comando> -h` detalla cada uno.
 - `python xd.py test [--solo host|motor] [-k texto] [-v]`: los tests del host y del contenedor; rc 0 solo si todos pasan.
 - `python xd.py cuadernos [--traer | --llevar] [--forzar] [--aplicar]`: el repo es la fuente de verdad de los cuadernos.
-- `python xd.py reiniciar-motor [--precalentar --proyecto N]`, `python xd.py archivar ARCHIVO [--aplicar]`.
+- `python xd.py trabajos [--todos] [--tipo T] [--estado E]`: la cola de trabajos. `--reconciliar [--aplicar]` la
+  pone al dia con lo que hay en Drive; `--reintentar ID [--aplicar]` vuelve a enviar un trabajo en error.
+- `python xd.py reiniciar-motor [--precalentar --proyecto N]`, `python xd.py archivar ARCHIVO [--aplicar]` (asist_*, lote_p* o dataset_p*).
 - `motor/corregir_pares.py` (manual, en el contenedor): corrige pares de clases confundidas; lo consume `exportar_yolo --correcciones`.
 - `herramientas/`: `inventario.ps1` (que datos hay), `limpiar.ps1` (vaciar datos, con reporte; `-Aplicar` borra) y
   `rotar_token.ps1` (rota el token de Label Studio sin mostrarlo). Rutas pensadas para `C:\PoC-Labelling`.

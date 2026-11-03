@@ -112,3 +112,7 @@ reconciliacion queda como respaldo para Colab.
 
 Un trabajo `enviado` sobrevive a reiniciar `ui.py` y `docker compose restart`, el tablero lo muestra igual y la
 reconciliacion lo lleva a `listo` cuando aparece el resultado.
+
+**Cumplido el 03/11/2026 en el hub (laptop i7-7600U):** un trabajo `asistente` real en Drive siguio en `enviado` tras
+`docker compose restart motor` y reiniciar `ui.py` (CLI y `/api/externos` con su id, reconciliacion sin
+diferencias); luego `archivar --aplicar` lo dejo en `archivado` y la UI dejo de mostrarlo. Datos de prueba borrados.

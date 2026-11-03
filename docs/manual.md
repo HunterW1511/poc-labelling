@@ -86,6 +86,9 @@ una captura, `q` sale. `--backend pt` usa PyTorch en vez de OpenVINO.
 | Colab: "Torch not compiled with CUDA" | El entorno no es GPU | Entorno de ejecucion -> Cambiar tipo -> T4 GPU y repetir celda 1 |
 | Colab: "Connection refused" en el asistente | Ollama no esta corriendo | Repetir la celda 1 |
 | Pasos externos no ve el resultado | Drive aun no sincroniza | Esperar un minuto y Actualizar |
+| Pasos externos dice "cambios de estado sin guardar" | Colab dejo resultados que la cola aun no registra | **Reconciliar** (`trabajos --reconciliar`): revisa el reporte y confirma |
+| Un trabajo aparece en Error | Fallo en Colab | Lee el error; **Reintentar** lo vuelve a enviar (`trabajos --reintentar ID`) o **Archivar** lo descarta |
+| Quiero ver todos los trabajos | - | `python xd.py trabajos --todos` (la cola vive en `datos/trabajos.sqlite` y sobrevive a reinicios) |
 | `git push` falla con GH007 | Tu Git usa el correo real | `git config --global user.email` con el correo noreply de GitHub |
 
 ## 5. Al terminar una prueba

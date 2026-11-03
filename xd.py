@@ -816,7 +816,7 @@ def _archivos_transporte(c):
 def _linea_trabajo(t):
     quien = f"p{t['proyecto']}" if t["proyecto"] is not None else (t["slug"] or "-")
     err = f"  ERROR: {t['error'][-60:]!r}" if t["error"] else ""
-    return (f"  {t['id']:>4} {t['tipo']:<14}{quien:<10}{t['estado']:<11}{t['actualizado']:<20}"
+    return (f"  {t['id']:>4} {t['tipo']:<14}{quien:<16} {t['estado']:<11}{t['actualizado']:<20}"
             f"{t['intentos']:>3}  {t['archivo']}{err}")
 
 
@@ -837,7 +837,7 @@ def cmd_trabajos(a):
     con.close()
     print(f"Cola {TRABAJOS_DB} | {len(ts)} trabajo(s)" + ("" if a.todos or a.estado else " sin terminar (--todos: todos)"))
     if ts:
-        print(f"  {'id':>4} {'tipo':<14}{'quien':<10}{'estado':<11}{'actualizado':<20}{'int':>3}  archivo")
+        print(f"  {'id':>4} {'tipo':<14}{'quien':<16} {'estado':<11}{'actualizado':<20}{'int':>3}  archivo")
         for t in ts:
             print(_linea_trabajo(t))
     return 0
@@ -895,7 +895,7 @@ def _reconciliar(C, a):
                       (f" ({x['resultado'] or x['error_de']})" if x["resultado"] or x["error_de"] else ""))
             else:
                 quien = f"p{x['proyecto']}" if x["proyecto"] is not None else x["slug"]
-                print(f"  adoptar {x['tipo']:<14}{quien:<10}{x['archivo']} -> {x['estado']}")
+                print(f"  adoptar {x['tipo']:<14}{quien:<16} {x['archivo']} -> {x['estado']}")
         if not a.aplicar:
             print(f"SOLO REPORTE: {len(r['acciones'])} accion(es); usa --aplicar para escribirlas en {TRABAJOS_DB}")
             return 0
