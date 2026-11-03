@@ -167,10 +167,12 @@ def armar(d):
                       if l["sin_importar"] and p in tablero.PROTEGIDOS)
         if prot:
             raise PermissionError(f"hay predicciones sin importar de proyectos protegidos {prot}: archivalas en Drive")
+    if nombre == "crear-proyecto" and args[0].endswith("-ref"):
+        raise ValueError(f"{args[0]} es una spec de referencia (solo para comparar): no se crea proyecto")
     if nombre == "crear-proyecto":                     # defensa en el servidor: nunca crear con spec invalida
         e, _ = tablero.xd._validar_spec(tablero._json(tablero.PROYECTOS / args[0] / "spec.json"), args[0])
         if e:
-            raise ValueError(f"la spec de {args[0]} tiene {len(e)} errores; corrigela antes de crear: {e[0]}")
+            raise ValueError(f"la spec de {args[0]} tiene {len(e)} error(es); corrigela antes de crear: {e[0]}")
     if aplicar:
         if not T.fue_ok(nombre, args):
             raise PermissionError("primero corre el reporte con las mismas opciones y que termine OK")

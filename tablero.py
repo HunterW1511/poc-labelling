@@ -142,8 +142,11 @@ def siguiente(t):
     if a.get("ultimo") == "resultado" and not a.get("aplicada"):
         return _sig("cli", "Revisa el resultado del asistente y aplica la spec",
                     f"python xd.py asistente-importar {s}")
+    if s and s.endswith("-ref"):                       # L.5: spec de referencia para comparar, no un proyecto
+        return _sig("", "Spec de referencia: solo para comparar (asistente-importar --comparar); no se crea proyecto")
     if t.get("spec_errores"):
-        return _sig("cli", f"Corrige la spec: {len(t['spec_errores'])} errores (edita spec.json y vuelve a validar)",
+        ne = len(t["spec_errores"])
+        return _sig("cli", f"Corrige la spec: {ne} error{'es' if ne != 1 else ''} (edita spec.json y vuelve a validar)",
                     f"python xd.py validar {s}")
     if s and not t.get("spec"):
         return _sig("cli", "Describe el caso con el asistente, o parte de la plantilla (sin asistente)",

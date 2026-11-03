@@ -84,6 +84,8 @@ def validar(spec):
     negs = spec.get("negativos") or []
     if not isinstance(negs, list) or any(not isinstance(n, str) or not n.strip() or "@" in n or ";" in n for n in negs):
         err.append("negativos: lista de textos sin '@' ni ';' (su confianza va en ajustes.conf_negativo)")
+    elif any(not n.isascii() for n in negs):
+        av.append("negativos: hay textos con acentos o fuera de ASCII; SAM 3 entiende ingles")
 
     # ------------------------------------------------------------- clases
     clases = spec.get("clases") or []

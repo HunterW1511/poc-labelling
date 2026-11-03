@@ -38,6 +38,7 @@ LLM = {
         "clases": "nombres de las clases que aparecen en sus fotos ([] si es negativo)",
         "descripcion": "que fotos van en la carpeta"},
 }
+# imagenes.raiz aqui es solo relleno: buzon.preparar_spec la fuerza a mis_imagenes/<slug> (una carpeta por proyecto)
 FIJO = {"esquema": spec.ESQUEMA, "imagenes": {"raiz": "mis_imagenes"},
         "motor": {"url": "http://motor:9090", "interactivo": True}}
 EXPERTO = {"raiz": {"imgsz", "ajustes"},

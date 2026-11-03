@@ -78,8 +78,9 @@ def main():
     ap.add_argument("--total", type=int, default=0)
     a = ap.parse_args()
     filas = plan_captura(cargar(a.spec), a.total or None)
+    w = max(14, *(len(f["carpeta"]) for f in filas)) + 1
     for f in filas:
-        print(f"{f['carpeta']:<14} {f['tipo']:<9} {f['fotos']:>4}  {f['motivo']}")
+        print(f"{f['carpeta']:<{w}} {f['tipo']:<9} {f['fotos']:>4}  {f['motivo']}")
     print(f"TOTAL {sum(f['fotos'] for f in filas)}")
 
 

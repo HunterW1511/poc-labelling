@@ -26,4 +26,9 @@ s["imagenes"]["raiz"] = "otra/carpeta"
 e, _ = xd._validar_spec(s, "plantilla")
 assert any("mis_imagenes" in x for x in e), e
 print("raiz fuera de mis_imagenes OK")
+s = copy.deepcopy(limpia)
+s["negativos"] = ["shadow", "\u00e1rbol"]
+_, a = spec.validar(s)
+assert any(x.startswith("negativos:") for x in a), a
+print("negativo fuera de ASCII avisa OK")
 print("TEST PLANTILLA OK")

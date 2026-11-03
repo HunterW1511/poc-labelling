@@ -367,7 +367,7 @@ def cmd_validar(a):
         print("ERROR:", x)
     for x in av:
         print("AVISO:", x)
-    print(f"{a.slug}: {len(e)} errores, {len(av)} avisos")
+    print(f"{a.slug}: {len(e)} error(es), {len(av)} aviso(s)")
     return 1 if e else 0
 
 
@@ -403,7 +403,10 @@ def cmd_crear_proyecto(a):
     if e:
         for x in e:
             print("ERROR:", x)
-        print(f"NO creo: la spec tiene {len(e)} errores  (python xd.py validar {a.slug})")
+        print(f"NO creo: la spec tiene {len(e)} error(es)  (python xd.py validar {a.slug})")
+        return 1
+    if a.slug.endswith("-ref"):
+        print(f"NO creo: {a.slug} es una spec de referencia (solo para comparar)")
         return 1
     raiz = ((spec.get("imagenes") or {}).get("raiz") or f"mis_imagenes/{a.slug}").strip("/")
     if raiz.split("/")[0] != "mis_imagenes":
@@ -445,14 +448,15 @@ def cmd_plan(a):
     spec = _spec(a.slug)
     base = _raiz(spec, a.slug)
     filas = plan_captura(spec, a.total or None)
-    print(f"{'carpeta':<14}{'tipo':<10}{'recom':>6}{'tienes':>8}{'faltan':>8}")
+    w = max(14, *(len(f["carpeta"]) for f in filas)) + 2
+    print(f"{'carpeta':<{w}}{'tipo':<10}{'recom':>6}{'tienes':>8}{'faltan':>8}")
     tr = tt = tf = 0
     for f in filas:
         n = _contar(base / f["carpeta"])
         falta = max(0, f["fotos"] - n)
         tr, tt, tf = tr + f["fotos"], tt + n, tf + falta
-        print(f"{f['carpeta']:<14}{f['tipo']:<10}{f['fotos']:>6}{n:>8}{falta:>8}")
-    print(f"{'TOTAL':<24}{tr:>6}{tt:>8}{tf:>8}")
+        print(f"{f['carpeta']:<{w}}{f['tipo']:<10}{f['fotos']:>6}{n:>8}{falta:>8}")
+    print(f"{'TOTAL':<{w + 10}}{tr:>6}{tt:>8}{tf:>8}")
     if a.variaciones:
         for f in filas:
             print(f"\n{f['carpeta']} ({f['motivo']}):")

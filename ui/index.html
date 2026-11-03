@@ -329,7 +329,7 @@ function visible(k, a, t, sa) {
   if (a.id === null && k !== sa) return false;
   if (a.id === "archivo") return false;
   if (t.protegido && (a.aplicar || k === "sincronizar")) return false;
-  if (k === "crear-proyecto") return !t.n && t.spec && !(t.spec_errores || []).length;
+  if (k === "crear-proyecto") return !t.n && t.spec && !(t.spec_errores || []).length && !/-ref$/.test(t.slug || "");
   if (k === "validar") return !!t.spec || !!(t.spec_errores || []).length;
   if (k === "spec-nueva") return !t.spec && !(t.spec_errores || []).length;
   if (k === "borrar-proyecto" || k === "sincronizar") return !!t.n && !!t.slug;

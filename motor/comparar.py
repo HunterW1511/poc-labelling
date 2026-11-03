@@ -1,7 +1,8 @@
-"""Etapa C.5: compara una spec GENERADA por el asistente con una de REFERENCIA hecha a mano (PURO).
+"""Etapa C.5 + L.5: compara una spec GENERADA por el asistente con una de REFERENCIA hecha a mano (PURO).
 Solo informa: cuenta aciertos en lo que el asistente debe decidir (clases, maximos, importancia, carpetas)
 y lista aparte lo que es ajuste EXPERTO (no lo propone el LLM) y lo informativo (prompts, colores).
-Uso: python comparar.py generada.json referencia.json"""
+Sinonimos: los declara quien compara (nada fijo por caso): "Pelo=Cabello,Ojo=Ojos".
+Uso: python comparar.py generada.json referencia.json [--sinonimos "A=B,C=D"]"""
 import difflib, re, unicodedata
 
 import esquema_llm as E
@@ -11,20 +12,37 @@ CORTE = 0.6
 
 def _n(s):
     t = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
-    return re.sub(r"[^a-z0-9]", "", t)
+    t = re.sub(r"[^a-z0-9]", "", t)
+    return t[:-1] if len(t) > 3 and t.endswith("s") else t        # plural simple: Tazas = Taza
 
 
 def _clases(s):
     return {c["nombre"]: c for c in s.get("clases") or [] if isinstance(c, dict) and c.get("nombre")}
 
 
-def emparejar(gen, ref):
-    """{clase_ref: clase_gen o None}: igual normalizado, luego parecido (difflib)."""
-    libres, out = {_n(g): g for g in _clases(gen)}, {}
+def _grupos(sinonimos):
+    """'Pelo=Cabello,Ojo=Ojos' o [['Pelo', 'Cabello']] -> {nombre normalizado: grupo}."""
+    if isinstance(sinonimos, str):
+        sinonimos = [g.split("=") for g in sinonimos.split(",") if g.strip()]
+    out = {}
+    for i, g in enumerate(sinonimos or ()):
+        for x in g:
+            if str(x).strip():
+                out[_n(x)] = i
+    return out
+
+
+def emparejar(gen, ref, sinonimos=()):
+    """{clase_ref: clase_gen o None}: igual normalizado, sinonimo declarado y luego parecido (difflib)."""
+    libres, out, grp = {_n(g): g for g in _clases(gen)}, {}, _grupos(sinonimos)
     for r in _clases(ref):
-        m = libres.pop(_n(r), None)
+        nr = _n(r)
+        m = libres.pop(nr, None)
+        if m is None and nr in grp:
+            k = next((x for x in libres if grp.get(x) == grp[nr]), None)
+            m = libres.pop(k) if k else None
         if m is None:
-            cand = difflib.get_close_matches(_n(r), list(libres), n=1, cutoff=CORTE)
+            cand = difflib.get_close_matches(nr, list(libres), n=1, cutoff=CORTE)
             m = libres.pop(cand[0]) if cand else None
         out[r] = m
     return out
@@ -34,9 +52,9 @@ def _imp(c):
     return (c or {}).get("importancia") or "media"          # plan.py trata None como media
 
 
-def comparar(gen, ref):
+def comparar(gen, ref, sinonimos=()):
     """-> {"aciertos", "total", "lineas"}"""
-    par, cg, cr = emparejar(gen, ref), _clases(gen), _clases(ref)
+    par, cg, cr = emparejar(gen, ref, sinonimos), _clases(gen), _clases(ref)
     ok, tot, l = 0, 0, []
 
     def punto(bien, txt):
@@ -58,17 +76,36 @@ def comparar(gen, ref):
 
     l.append("CARPETAS (por tipo y clases)")
     mapa = {r: g for r, g in par.items() if g}
-    firmas_g = {(k.get("tipo"), frozenset(k.get("clases") or [])): k.get("nombre")
-                for k in gen.get("carpetas") or [] if isinstance(k, dict)}
+    gens = [k for k in gen.get("carpetas") or [] if isinstance(k, dict)]
+    usadas = set()
     for k in ref.get("carpetas") or []:
-        f = (k.get("tipo"), frozenset(mapa.get(x, f"?{x}") for x in k.get("clases") or []))
-        g = firmas_g.get(f)
-        punto(g is not None, f"{k.get('nombre')} ({k.get('tipo')}, {len(k.get('clases') or [])} clases): "
-                             + (f"generada como '{g}'" if g else "sin equivalente"))
-    for (t, cl), n in firmas_g.items():
-        if not any((k.get("tipo"), frozenset(mapa.get(x, f"?{x}") for x in k.get("clases") or [])) == (t, cl)
-                   for k in ref.get("carpetas") or []):
-            punto(False, f"carpeta '{n}' ({t}) sobra")
+        if not isinstance(k, dict):
+            continue
+        quiero = {mapa.get(x, f"?{x}") for x in k.get("clases") or []}
+        mejor, puntaje = None, 0.0
+        for i, kg in enumerate(gens):                  # mismo tipo y la mayor coincidencia de clases
+            if i in usadas or kg.get("tipo") != k.get("tipo"):
+                continue
+            tiene = set(kg.get("clases") or [])
+            p = len(quiero & tiene) / len(quiero | tiene) if quiero | tiene else 1.0
+            p += 0.01 * (_n(kg.get("nombre")) == _n(k.get("nombre")))          # desempate por nombre
+            if p > puntaje:
+                mejor, puntaje = i, p
+        desc = f"{k.get('nombre')} ({k.get('tipo')}, {len(quiero)} clases)"
+        if mejor is None:
+            punto(False, f"{desc}: sin equivalente")
+            continue
+        usadas.add(mejor)
+        kg = gens[mejor]
+        tiene = set(kg.get("clases") or [])
+        if tiene == quiero:
+            punto(True, f"{desc}: generada como '{kg.get('nombre')}'")
+        else:
+            punto(False, f"{desc}: generada como '{kg.get('nombre')}' con otras clases | "
+                         f"faltan {sorted(quiero - tiene)} | sobran {sorted(tiene - quiero)}")
+    for i, kg in enumerate(gens):
+        if i not in usadas:
+            punto(False, f"carpeta '{kg.get('nombre')}' ({kg.get('tipo')}) sobra")
 
     l.append("INFORMATIVO (no cuenta)")
     for r, g in par.items():
@@ -91,6 +128,11 @@ def comparar(gen, ref):
 
 
 if __name__ == "__main__":
-    import sys
+    import argparse
     from spec import cargar
-    print("\n".join(comparar(cargar(sys.argv[1]), cargar(sys.argv[2]))["lineas"]))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("generada")
+    ap.add_argument("referencia")
+    ap.add_argument("--sinonimos", default="", help='"Pelo=Cabello,Ojo=Ojos"')
+    a = ap.parse_args()
+    print("\n".join(comparar(cargar(a.generada), cargar(a.referencia), a.sinonimos)["lineas"]))

@@ -1,4 +1,4 @@
-"""Pruebas de comparar.py (C.5). PURO. Uso: python test_comparar.py"""
+"""Pruebas de comparar.py (C.5 + L.5). PURO. Uso: python test_comparar.py"""
 import copy
 
 import comparar as C
@@ -14,7 +14,7 @@ def test_identica():
 
 def test_diferencias():
     g = copy.deepcopy(REF)
-    g["clases"][0]["nombre"] = "Manzanas"                     # parecido: se empareja
+    g["clases"][0]["nombre"] = "Manzanas"                     # plural: se empareja
     g["carpetas"][0]["clases"] = ["Manzanas"]
     g["carpetas"][2]["clases"] = ["Manzanas", "Platano"]
     g["clases"][0]["max_por_imagen"] = 3                      # fallo de maximo
@@ -24,6 +24,26 @@ def test_diferencias():
     t = "\n".join(r["lineas"])
     assert "generada como 'Manzanas'" in t and "'Pera' sobra" in t and "Fondo (negativo" in t
     assert r["aciertos"] == r["total"] - 3, t
+
+
+def test_sinonimos():
+    g = copy.deepcopy(REF)
+    g["clases"][0]["nombre"] = "Poma"                         # nada parecido a Manzana
+    for k in g["carpetas"]:
+        k["clases"] = ["Poma" if x == "Manzana" else x for x in k["clases"]]
+    assert "FALTA" in "\n".join(C.comparar(g, REF)["lineas"])
+    r = C.comparar(g, REF, sinonimos="Manzana=Poma")
+    assert r["aciertos"] == r["total"], r["lineas"]
+
+
+def test_carpeta_con_otras_clases_y_todas_las_sobrantes():
+    g = copy.deepcopy(REF)
+    g["carpetas"][2]["clases"] = ["Manzana"]                  # mezcla sin Platano
+    g["carpetas"] += [{"nombre": "Extra1", "tipo": "pieza", "clases": ["Manzana"]},
+                      {"nombre": "Extra2", "tipo": "pieza", "clases": ["Manzana"]}]
+    t = "\n".join(C.comparar(g, REF)["lineas"])
+    assert "con otras clases" in t and "faltan ['Platano']" in t, t
+    assert "'Extra1' (pieza) sobra" in t and "'Extra2' (pieza) sobra" in t, t
 
 
 def test_expertos_y_compartidos():

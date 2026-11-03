@@ -59,6 +59,7 @@ def test_preparar_spec_fuerza_slug_y_reporta_problemas():
     r = {"resultado": {"spec": E.completar(E.EJEMPLO["spec"]), "problemas": ["algo"]}}
     s, err, _ = buzon.preparar_spec(r, "otro")
     assert s["proyecto"]["slug"] == "otro" and err == ["asistente: algo"]
+    assert s["imagenes"] == {"raiz": "mis_imagenes/otro"}, s["imagenes"]   # L.5: raiz propia por slug
     assert buzon.preparar_spec({"resultado": {"spec": None}}, "x")[0] is None
 
 
