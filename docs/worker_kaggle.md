@@ -97,6 +97,16 @@ de una persona a traves del hub, es al menos una zona gris y arriesga la cuenta.
 - Tiempo por foto (SAM 3 y modo hijo) y por entrenamiento corto en T4 frente a Colab.
 - Valores reales de `kernels status` y la clave correcta de datasets en el metadata.
 
+### Medido (03/11/2026, hub = laptop i7-7600U, conexion de la oficina)
+| Que | Valor |
+| --- | --- |
+| `kaggle-pesos --aplicar` (dataset privado `<usuario>/xd-pesos`, version 1) | sha256 de `sam3.pt` 13 s; subida 190 s (la CLI comprime: ~2.13 GB transferidos por 3.45 GB; 13-20 MB/s); "ready" 70 s despues |
+| Verificacion | `datasets files`: `sam3.pt` 3450062241 bytes (identico), `LICENSE_SAM.txt`, `pesos.json`; status `ready` |
+| Autenticacion | API token en `~/.kaggle/access_token` **sin extension** (un `.txt` no lo detecta la CLI) |
+
+Pendiente para P.2.7: el kernel compara el sha256 de `/kaggle/input/xd-pesos/sam3.pt` con `pesos.json` antes de usarlo.
+Visto una vez durante la subida: un `datos/kaggle/sam3.pt` transitorio (sin enlace con el original; desaparecio solo).
+
 ## 5. Fuentes (consultadas el 03/11/2026)
 - CLI oficial, kernels: https://github.com/Kaggle/kaggle-cli/blob/main/docs/kernels.md
 - CLI oficial, metadata de kernels: https://github.com/Kaggle/kaggle-cli/blob/main/docs/kernels_metadata.md
