@@ -325,3 +325,25 @@ def aplicar(con, acciones, leer_error=lambda nombre: nombre, ahora=None):
         except (Conflicto, ValueError, KeyError) as e:
             avisos.append(f"{x['archivo']}: {e}")
     return hechas, avisos
+
+
+def proyectar(trabajos, acciones):
+    """Aplica EN MEMORIA las acciones de reconciliar(): la vista que tendria la cola tras --aplicar.
+    Para lectores de solo lectura (tablero). Los adoptados llevan id None. No escribe."""
+    out = {t["id"]: dict(t) for t in trabajos}
+    nuevos = []
+    for x in acciones:
+        if x["op"] == "mover":
+            t = out.get(x["id"])
+            if t is None:
+                continue
+            t["estado"] = x["a"]
+            if x.get("resultado"):
+                t["resultado"] = x["resultado"]
+            if x["a"] == "error":
+                t["error"] = x.get("error_de")
+        else:
+            nuevos.append({"id": None, "tipo": x["tipo"], "proyecto": x["proyecto"], "slug": x["slug"],
+                           "estado": x["estado"], "archivo": x["archivo"], "resultado": x["resultado"],
+                           "creado": None, "actualizado": None, "intentos": 0, "error": x.get("error_de")})
+    return list(out.values()) + nuevos

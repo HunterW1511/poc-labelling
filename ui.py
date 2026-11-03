@@ -46,6 +46,8 @@ ACCIONES = {
                         "--backend": ["auto", "pt", "openvino"]}},
     "borrar-proyecto": {"id": "slug", "aplicar": True, "titulo": "Borrar proyecto"},
     "archivar": {"id": "archivo", "aplicar": True, "titulo": "Archivar"},
+    "trabajos": {"id": None, "aplicar": True, "titulo": "Cola de trabajos",
+                 "opciones": {"--reconciliar": "flag", "--reintentar": "int"}},
 }
 ESCRIBEN_SIN_APLICAR = {"sincronizar", "lote-importar"}        # escriben en Label Studio sin modo reporte
 
@@ -131,7 +133,7 @@ def armar(d):
         args.append(str(n))
     elif a["id"] == "archivo":
         nom = str(d.get("archivo") or "")
-        if Path(nom).name != nom or not re.fullmatch(r"(asist_.+|lote_p\d+_.+)\.zip", nom):
+        if Path(nom).name != nom or not re.fullmatch(r"(asist_.+|lote_p\d+_.+|dataset_p\d+_.+)\.zip", nom):
             raise ValueError(f"archivo no archivable: {nom!r}")
         args.append(nom)
     defs = a.get("opciones") or {}
@@ -163,7 +165,7 @@ def armar(d):
     if (aplicar or nombre in ESCRIBEN_SIN_APLICAR) and n in tablero.PROTEGIDOS:
         raise PermissionError(f"proyecto {n} protegido: {nombre} no se ejecuta desde la UI")
     if nombre == "lote-importar":
-        prot = sorted(p for p, l in tablero._lotes(tablero._drive()).items()
+        prot = sorted(p for p, l in tablero.lotes(tablero.vista()).items()
                       if l["sin_importar"] and p in tablero.PROTEGIDOS)
         if prot:
             raise PermissionError(f"hay predicciones sin importar de proyectos protegidos {prot}: archivalas en Drive")

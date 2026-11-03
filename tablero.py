@@ -1,5 +1,6 @@
 """Etapa E.2: tablero por proyecto, SOLO LECTURA (biblioteca estandar).
 Junta lo que ya saben xd.py, plan.py, buzon.py y registro.py; no escribe nada.
+P.1.5: el estado de los trabajos sale de la cola (SQLite) mas la reconciliacion EN MEMORIA (vista()).
 Prueba: python tablero.py   (imprime el JSON)"""
 import json, re, sys
 from pathlib import Path
@@ -8,6 +9,7 @@ import xd
 
 sys.path.insert(0, str(xd.RAIZ / "motor"))
 import buzon                                   # noqa: E402
+import cola_trabajos as C                      # noqa: E402
 import registro                                # noqa: E402
 from plan import plan_captura                  # noqa: E402
 
@@ -15,8 +17,7 @@ PROYECTOS = xd.RAIZ / "motor" / "proyectos"
 DATASETS = xd.RAIZ / "motor" / "datasets"
 MODELOS = xd.RAIZ / "motor" / "modelos"
 PROTEGIDOS = {int(x) for x in xd.ENV.get("UI_PROTEGIDOS", "1,2").split(",") if x.strip().isdigit()}
-LOTE = re.compile(r"^lote_p(\d+)_.+(_pred\.json|\.zip)$")
-ASIST = re.compile(r"^asist_(.+)_(\d{8}-\d{6})")
+ESPERA = ("pendiente", "enviado", "en_proceso")
 
 
 def _json(f):
@@ -44,27 +45,38 @@ def _drive():
     return Path(d) if d and Path(d).is_dir() else None
 
 
-def _lotes(drive):
-    """{N: {"en_colab": [...], "sin_importar": [...]}} por nombre lote_p<N>_... (misma regla que lote-importar)."""
+def vista():
+    """Trabajos de la cola + lo que la reconciliacion cambiaria, aplicado EN MEMORIA (no escribe ni crea la base).
+    -> {"trabajos": [...], "sin_guardar": N, "avisos": [...]}"""
+    avisos, ts = [], []
+    try:
+        con = xd._cola(crear=False)
+        if con:
+            try:
+                ts = C.listar(con)
+            finally:
+                con.close()
+    except Exception as e:                          # solo lectura: mostrar el error en vez de caer
+        avisos.append(f"No pude leer la cola {xd.TRABAJOS_DB}: {e}")
+    r = C.reconciliar(ts, xd._archivos_transporte(xd._carpetas_transporte()))
+    return {"trabajos": C.proyectar(ts, r["acciones"]), "sin_guardar": len(r["acciones"]), "avisos": avisos + r["avisos"]}
+
+
+def lotes(v):
+    """{N: {"en_colab": [zips en espera], "sin_importar": [_pred.json listos]}} (mismas claves que antes de P.1)."""
     out = {}
-    if not drive:
-        return out
-    for f in drive.iterdir():
-        m = LOTE.match(f.name)
-        if not m:
+    for t in v["trabajos"]:
+        if t["tipo"] != "preetiquetado" or t["proyecto"] is None:
             continue
-        d = out.setdefault(int(m.group(1)), {"en_colab": [], "sin_importar": []})
-        if m.group(2) == ".zip":
-            if not (drive / (f.name[:-4] + "_pred.json")).exists():
-                d["en_colab"].append(f.name)
-        elif not (xd.LOTES_LOCAL / f.name).exists():
-            d["sin_importar"].append(f.name)
+        d = out.setdefault(t["proyecto"], {"en_colab": [], "sin_importar": []})
+        if t["estado"] in ESPERA:
+            d["en_colab"].append(t["archivo"])
+        elif t["estado"] == "listo":
+            d["sin_importar"].append(t["resultado"])
+    for d in out.values():
+        d["en_colab"].sort()
+        d["sin_importar"].sort()
     return out
-
-
-def _slug_asist(nombre):
-    m = ASIST.match(nombre)
-    return m.group(1) if m else None
 
 
 def _fecha(nombre):
@@ -72,19 +84,28 @@ def _fecha(nombre):
     return m.group(0) if m else ""
 
 
-def _asistente(bz, slug, ruta_spec):
-    if not bz:
+def _asist_vivos(v, slug):
+    """Trabajos del asistente del slug que no se archivaron, del mas viejo al mas nuevo (la fecha va en el nombre)."""
+    return sorted((t for t in v["trabajos"] if t["tipo"] == "asistente" and t["slug"] == slug
+                   and t["estado"] != "archivado"), key=lambda t: _fecha(t["archivo"]))
+
+
+def _asistente(v, slug):
+    """Estado del ultimo trabajo del asistente del slug (mismas claves que antes de P.1)."""
+    todos = [t for t in v["trabajos"] if t["tipo"] == "asistente" and t["slug"] == slug]
+    vivos = _asist_vivos(v, slug)
+    if not vivos:
         return None
-    res, err = buzon.resultados(bz, slug), buzon.errores(bz, slug)
-    pend = [z for z in buzon.pendientes(bz) if _slug_asist(z.name) == slug]
-    cands = [(_fecha(f.name), tipo, f) for tipo, fs in (("resultado", res), ("error", err), ("pendiente", pend))
-             for f in fs]
-    if not cands:
-        return None
-    fecha, tipo, f = max(cands, key=lambda x: (x[0], x[1]))
-    aplicada = tipo == "resultado" and ruta_spec.exists() and ruta_spec.stat().st_mtime >= f.stat().st_mtime
-    return {"ultimo": tipo, "trabajo": f.name, "fecha": fecha, "aplicada": aplicada,
-            "resultados": len(res), "pendientes": len(pend)}
+    t = vivos[-1]
+    if t["estado"] in ("listo", "importado"):
+        ultimo, archivo = "resultado", t["resultado"]
+    elif t["estado"] == "error":
+        ultimo, archivo = "error", t["archivo"][:-4] + "_error.txt"
+    else:
+        ultimo, archivo = "pendiente", t["archivo"]
+    return {"ultimo": ultimo, "trabajo": archivo, "fecha": _fecha(t["archivo"]), "aplicada": t["estado"] == "importado",
+            "id": t["id"], "resultados": sum(1 for x in todos if x["resultado"]),
+            "pendientes": sum(1 for x in todos if x["estado"] in ESPERA)}
 
 
 def _fotos(spec, slug):
@@ -110,19 +131,18 @@ def _modelos(n):
     return {"n": len(vals), "activo": reg.get("activo"), "tabla": tabla}, origenes
 
 
-def _runs(runs_dir, n, origenes):
-    if not runs_dir or not runs_dir.is_dir():
-        return []
-    return sorted(r.name for r in runs_dir.glob(f"dataset_p{n}_*")
-                  if (r / "weights" / "metricas.json").exists() and f"runs/{r.name}" not in origenes)
+def _runs(v, n):
+    """Runs terminados (con metricas.json) que aun no se registran: entrenamientos listos del proyecto."""
+    return sorted(t["resultado"] for t in v["trabajos"]
+                  if t["tipo"] == "entrenamiento" and t["proyecto"] == n and t["estado"] == "listo")
 
 
-def _datos(t, n, det, lotes, runs_dir):
+def _datos(t, n, det, lotes, v):
     t["ls"] = {k: (det or {}).get(k) for k in ("task_number", "num_tasks_with_annotations",
                                                 "total_predictions_number", "model_version")} if det else None
     t["lotes"] = lotes.get(n, {"en_colab": [], "sin_importar": []})
-    t["modelos"], origenes = _modelos(n)
-    t["runs_sin_registrar"] = _runs(runs_dir, n, origenes)
+    t["modelos"], _ = _modelos(n)
+    t["runs_sin_registrar"] = _runs(v, n)
     t["datasets"] = sorted(f.name for f in DATASETS.glob(f"dataset_p{n}_*.zip"))[-3:] if DATASETS.is_dir() else []
 
 
@@ -202,12 +222,12 @@ def asistente_detalle(slug):
     La spec pasa por buzon.preparar_spec: el mismo camino que asistente-importar."""
     bz = _buzon_dir(_drive())
     ruta = PROYECTOS / slug / "spec.json"
-    out = {"slug": slug, "spec_existe": ruta.exists(), "estado": _asistente(bz, slug, ruta) if bz else None}
+    out = {"slug": slug, "spec_existe": ruta.exists(), "estado": _asistente(vista(), slug) if bz else None}
     if not bz:
         out["error"] = "No encuentro el buzon del asistente en Drive (ASISTENTE_DRIVE o LOTES_DRIVE)"
         return out
     st = out["estado"] or {}
-    if st.get("ultimo") == "error":
+    if st.get("ultimo") == "error" and (bz / st["trabajo"]).is_file():
         out["error_colab"] = (bz / st["trabajo"]).read_text(encoding="utf-8", errors="replace")[-1500:]
     fs = buzon.resultados(bz, slug)
     if not fs:
@@ -239,7 +259,6 @@ PASOS = {
     "preetiquetado": {"colab": "Colab: abre el notebook de pre-etiquetado y corre la celda 2 (la 1 si la sesion es nueva)"},
     "entrenamiento": {"colab": "Colab: notebook de entrenamiento; en la celda 1 pon DS = '{archivo}' y PROYECTO = {n}; corre las celdas 1, 2 y 3"},
 }
-DS_RE = re.compile(r"^dataset_p(\d+)_.+\.zip$")
 
 
 def _instr(tipo, **kw):
@@ -247,58 +266,56 @@ def _instr(tipo, **kw):
     return t.format(**kw) if t else f"{EJECUTOR}: sin instrucciones para {tipo}"
 
 
-def _item(tipo, archivo, estado, texto, n=None, slug=None, accion=None):
-    return {"tipo": tipo, "archivo": archivo, "estado": estado, "texto": texto, "n": n, "slug": slug,
+def _item(tipo, archivo, estado, texto, n=None, slug=None, accion=None, id=None):
+    return {"tipo": tipo, "archivo": archivo, "estado": estado, "texto": texto, "n": n, "slug": slug, "id": id,
             "accion": accion, "protegido": n in PROTEGIDOS,
-            "archivable": estado == "en_espera" and tipo in ("asistente", "preetiquetado")}
+            "archivable": estado in ("en_espera", "error") and tipo in ("asistente", "preetiquetado", "entrenamiento")}
+
+
+def _reintentar(t):
+    return {"accion": "trabajos", "titulo": "Reintentar", "opciones": {"--reintentar": t["id"]}} if t["id"] is not None else None
 
 
 def externos():
-    """Trabajos que esperan o vuelven del ejecutor externo (SOLO LECTURA)."""
-    drive = _drive()
-    out = {"ejecutor": EJECUTOR, "items": [], "avisos": []}
-    if not drive:
-        out["avisos"].append("No encuentro LOTES_DRIVE (Google Drive para escritorio)")
-        return out
+    """Trabajos que esperan o vuelven del ejecutor externo, segun la cola (SOLO LECTURA)."""
+    v = vista()
+    out = {"ejecutor": EJECUTOR, "items": [], "avisos": list(v["avisos"]), "sin_guardar": v["sin_guardar"]}
+    if v["sin_guardar"]:
+        out["avisos"].append(f"{v['sin_guardar']} cambio(s) de estado vistos en Drive sin guardar en la cola: Reconciliar")
     it = out["items"]
-    bz = _buzon_dir(drive)
-    if bz:
-        for z in buzon.pendientes(bz):
-            it.append(_item("asistente", z.name, "en_espera", _instr("asistente"), slug=_slug_asist(z.name)))
-        for e in buzon.errores(bz):
-            s = _slug_asist(e.name)
-            res = buzon.resultados(bz, s) if s else []
-            if not res or _fecha(res[-1].name) < _fecha(e.name):
-                it.append(_item("asistente", e.name, "error", "Fallo en Colab: revisalo en Asistente; para reintentar "
-                                "borra el _error.txt y vuelve a correr la celda 2", slug=s))
-    for n, l in sorted(_lotes(drive).items()):
-        for f in sorted(l["en_colab"]):
-            it.append(_item("preetiquetado", f, "en_espera", _instr("preetiquetado"), n=n))
-        for f in sorted(l["sin_importar"]):
-            it.append(_item("preetiquetado", f, "listo", "Predicciones listas: importalas a Label Studio", n=n,
-                            accion={"accion": "lote-importar", "opciones": {"--fijar-version": True}}))
-    ds_dir = Path(xd.ENV.get("DATASETS_DRIVE") or drive.parent / "datasets")
-    runs_dir = Path(xd.ENV.get("RUNS_DRIVE") or drive.parent / "runs")
-    runs = [r for r in runs_dir.iterdir() if r.is_dir()] if runs_dir.is_dir() else []
-    ultimos = {}
-    if ds_dir.is_dir():
-        for f in sorted(ds_dir.glob("dataset_p*.zip")):
-            m = DS_RE.match(f.name)
-            if m:
-                ultimos[int(m.group(1))] = f
-    for n, f in sorted(ultimos.items()):
-        if not any(r.name.startswith(f.stem) for r in runs):
-            it.append(_item("entrenamiento", f.name, "en_espera", _instr("entrenamiento", archivo=f.name, n=n), n=n))
-    for n in sorted({int(m.group(1)) for r in runs for m in [re.match(r"^dataset_p(\d+)_", r.name)] if m}):
-        _, origenes = _modelos(n)
-        for r in _runs(runs_dir, n, origenes):
-            it.append(_item("entrenamiento", r, "listo", "Corrida terminada con metricas.json: registrala", n=n,
-                            accion={"accion": "registrar", "n": n, "opciones": {"--run": r, "--activar": True}}))
+    ultimo_ds = {}                                   # el cuaderno de entrenamiento toma el ultimo dataset del proyecto
+    for t in v["trabajos"]:
+        if t["tipo"] == "entrenamiento" and t["estado"] in ESPERA:
+            ultimo_ds[t["proyecto"]] = max(ultimo_ds.get(t["proyecto"], ""), t["archivo"])
+    for t in sorted(v["trabajos"], key=lambda t: (t["tipo"], t["proyecto"] or 0, t["archivo"])):
+        tipo, n, slug, est = t["tipo"], t["proyecto"], t["slug"], t["estado"]
+        if est in ESPERA:
+            if tipo == "entrenamiento" and t["archivo"] != ultimo_ds.get(n):
+                out["avisos"].append(f"{t['archivo']}: dataset viejo en espera (Colab entrena el ultimo); archivalo")
+                continue
+            texto = _instr(tipo, archivo=t["archivo"], n=n)
+            if est == "pendiente":
+                texto = "El zip no llego a Drive: repite el comando que lo creo. " + texto
+            it.append(_item(tipo, t["archivo"], "en_espera", texto, n=n, slug=slug, id=t["id"]))
+        elif est == "listo" and tipo == "preetiquetado":
+            it.append(_item(tipo, t["resultado"], "listo", "Predicciones listas: importalas a Label Studio", n=n,
+                            id=t["id"], accion={"accion": "lote-importar", "opciones": {"--fijar-version": True}}))
+        elif est == "listo" and tipo == "entrenamiento":
+            it.append(_item(tipo, t["resultado"], "listo", "Corrida terminada con metricas.json: registrala", n=n,
+                            id=t["id"], accion={"accion": "registrar", "n": n,
+                                                "opciones": {"--run": t["resultado"], "--activar": True}}))
+        elif est == "error":
+            if tipo == "asistente" and _asist_vivos(v, slug)[-1]["archivo"] != t["archivo"]:
+                continue                             # ya hay un trabajo mas nuevo del mismo slug
+            it.append(_item(tipo, t["archivo"], "error", f"Fallo en {EJECUTOR}: {(t['error'] or '')[-200:]}"
+                            " | Reintentar lo vuelve a enviar; Archivar lo descarta", n=n, slug=slug, id=t["id"],
+                            accion=_reintentar(t)))
     for tipo in ("asistente", "preetiquetado"):
         k = sum(1 for x in it if x["tipo"] == tipo and x["estado"] == "en_espera")
         if k > 1:
             out["avisos"].append(f"Hay {k} trabajos de {tipo} en espera: la lanzadora los procesa TODOS; archiva los que no quieras")
     return out
+
 
 def proyectos():
     avisos = []
@@ -307,16 +324,12 @@ def proyectos():
         avisos.append("Label Studio no responde: sin tareas ni anotadas")
     lista = (lista.get("results") if isinstance(lista, dict) else lista) or []
     ls = {p["id"]: p for p in lista if isinstance(p, dict) and "id" in p}
-    drive = _drive()
-    if not drive:
+    if not _drive():
         avisos.append("No encuentro LOTES_DRIVE (Google Drive para escritorio): sin lotes, runs ni asistente")
-    bz = Path(xd.ENV.get("ASISTENTE_DRIVE") or (drive.parent / "asistente" if drive else ""))
-    bz = bz if str(bz) not in ("", ".") and bz.is_dir() else None
-    runs_dir = Path(xd.ENV["RUNS_DRIVE"]) if xd.ENV.get("RUNS_DRIVE") else (drive.parent / "runs" if drive else None)
-    lotes = _lotes(drive)
+    v = vista()
+    lts = lotes(v)
     slugs = {d.name for d in PROYECTOS.iterdir() if d.is_dir()} if PROYECTOS.is_dir() else set()
-    if bz:
-        slugs |= {x for x in (_slug_asist(f.name) for f in bz.glob("asist_*")) if x}
+    slugs |= {t["slug"] for t in v["trabajos"] if t["tipo"] == "asistente" and t["slug"]}
     por_titulo = {p.get("title"): pid for pid, p in ls.items()}
     tarjetas, usados, compartidas = [], set(), {}
     for slug in sorted(slugs):
@@ -330,7 +343,7 @@ def proyectos():
             avisos.append(f"{slug}: el proyecto {n} ya no existe en Label Studio")
             n = None
         t = {"slug": slug, "titulo": titulo or slug, "spec": bool(spec), "n": n, "vinculo": vinculo if n else None,
-             "protegido": n in PROTEGIDOS, "asistente": _asistente(bz, slug, ruta)}
+             "protegido": n in PROTEGIDOS, "asistente": _asistente(v, slug)}
         if ruta.exists() and spec is None:
             t["spec_errores"] = [f"spec.json no es JSON valido: revisalo con  python xd.py validar {slug}"]
         if spec:
@@ -347,14 +360,14 @@ def proyectos():
         t["borrado"] = borr[-1].name if borr and not n else None
         if n:
             usados.add(n)
-            _datos(t, n, _ls(f"/api/projects/{n}"), lotes, runs_dir)
+            _datos(t, n, _ls(f"/api/projects/{n}"), lts, v)
         t["siguiente"] = siguiente(t)
         tarjetas.append(t)
     for pid, p in sorted(ls.items()):
         if pid not in usados:
             t = {"slug": None, "titulo": p.get("title") or f"Proyecto {pid}", "spec": False, "n": pid,
                  "vinculo": None, "protegido": pid in PROTEGIDOS, "asistente": None}
-            _datos(t, pid, _ls(f"/api/projects/{pid}"), lotes, runs_dir)
+            _datos(t, pid, _ls(f"/api/projects/{pid}"), lts, v)
             t["siguiente"] = siguiente(t)
             tarjetas.append(t)
     for ruta_c, ss in sorted(compartidas.values()):

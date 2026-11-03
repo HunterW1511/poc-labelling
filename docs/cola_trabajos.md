@@ -100,8 +100,11 @@ reconciliacion queda como respaldo para Colab.
 
 ## 6. Lo que no cambia
 
-- `tablero.externos()` conserva su salida (`tipo`, `archivo`, `estado` en `en_espera | listo | error`, `accion`); en
-  P.1.5 solo cambia de donde lee: `enviado` y `en_proceso` se muestran como `en_espera`.
+- `tablero.externos()` conserva su salida (`tipo`, `archivo`, `estado` en `en_espera | listo | error`, `accion`); desde
+  P.1.5 lee `tablero.vista()`: la cola mas la reconciliacion aplicada EN MEMORIA (`cola_trabajos.proyectar`), sin
+  escribir ni crear la base. `pendiente`, `enviado` y `en_proceso` se muestran como `en_espera`. Si hay cambios sin
+  guardar, la UI ofrece **Reconciliar** (`trabajos --reconciliar`, con reporte). Unica diferencia visible: un trabajo
+  en `error` se muestra por su zip (no por el `_error.txt`) y ofrece Reintentar y Archivar.
 - El candado de `ui.py` (`/api/trabajo`, un comando a la vez) es otra cosa y se queda igual.
 - Nucleo (`reglas.py`, `pipeline.py`, `leer_perfil`) y cuadernos: sin cambios en P.1.
 

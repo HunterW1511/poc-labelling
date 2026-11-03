@@ -181,6 +181,32 @@ def test_cola_rota_no_rompe_el_comando():
         assert list((drive / "asistente").glob("asist_rota_*.zip"))
 
 
+def test_tablero_lee_la_cola_sin_escribir():
+    with tempfile.TemporaryDirectory() as t:
+        raiz, drive = _preparar(Path(t))
+        import tablero
+        tablero.PROYECTOS, tablero.MODELOS = raiz / "motor" / "proyectos", raiz / "motor" / "modelos"
+        bz, lo = drive / "asistente", drive / "lotes"
+        for f, txt in (("asist_s_20261103-100000.zip", "z"), ("asist_s_20261103-100000_error.txt", "Traceback boom")):
+            (bz / f).write_text(txt, encoding="utf-8")
+        for f in ("lote_p3_x.zip", "lote_p3_x_pred.json", "lote_p3_y.zip"):
+            (lo / f).write_text("{}", encoding="utf-8")
+        x = tablero.externos()                                # sin base: adopcion EN MEMORIA
+        assert not xd.TRABAJOS_DB.exists() and x["sin_guardar"] == 3, x
+        est = {(i["tipo"], i["estado"]): i for i in x["items"]}
+        assert set(est) == {("asistente", "error"), ("preetiquetado", "listo"), ("preetiquetado", "en_espera")}, est
+        assert est[("asistente", "error")]["accion"] is None   # sin id guardado no se ofrece reintentar
+        assert tablero.lotes(tablero.vista()) == {3: {"en_colab": ["lote_p3_y.zip"], "sin_importar": ["lote_p3_x_pred.json"]}}
+        a = tablero._asistente(tablero.vista(), "s")
+        assert a["ultimo"] == "error" and a["trabajo"] == "asist_s_20261103-100000_error.txt" and not a["aplicada"]
+        _reconciliar()                                        # se guarda: misma vista, ya sin cambios pendientes
+        x = tablero.externos()
+        est = {(i["tipo"], i["estado"]): i for i in x["items"]}
+        assert x["sin_guardar"] == 0 and est[("asistente", "error")]["archivable"]
+        assert est[("asistente", "error")]["accion"]["opciones"] == {"--reintentar": est[("asistente", "error")]["id"]}
+        assert "boom" in est[("asistente", "error")]["texto"]
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

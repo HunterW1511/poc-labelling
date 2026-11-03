@@ -68,7 +68,7 @@ a{color:var(--ac)}
 <p id="servicios">Cargando servicios...</p>
 </section>
 <section class="card" id="externos">
-<div class="fila" style="justify-content:space-between"><h2>Pasos externos (<span id="ejecutor">colab</span>)</h2><button id="xact">Actualizar</button></div>
+<div class="fila" style="justify-content:space-between"><h2>Pasos externos (<span id="ejecutor">colab</span>)</h2><div><button id="xrec" style="display:none">Reconciliar</button> <button id="xact">Actualizar</button></div></div>
 <div id="xavisos" class="avisos"></div>
 <div id="xlista"><p class="chico">Cargando...</p></div>
 </section><section class="card" id="asistente">
@@ -303,12 +303,13 @@ async function cargarExternos() {
   try { d = await api("/api/externos"); } catch (e) { $("#xlista").innerHTML = '<p class="avisos">' + esc(e.message) + "</p>"; return; }
   $("#ejecutor").textContent = d.ejecutor;
   $("#xavisos").innerHTML = (d.avisos || []).map(esc).join("<br>");
+  $("#xrec").style.display = d.sin_guardar ? "" : "none";
   XITEMS = d.items || [];
   if (!XITEMS.length) { $("#xlista").innerHTML = '<p class="chico">Nada pendiente en ' + esc(d.ejecutor) + ".</p>"; return; }
   $("#xlista").innerHTML = XITEMS.map((x, i) => '<div class="sig"><b>' + esc(XEST[x.estado] || x.estado) + "</b> | " + esc(x.tipo) +
     (x.n ? " | proyecto " + x.n : "") + (x.slug ? " | " + esc(x.slug) : "") + "<code>" + esc(x.archivo) + "</code>" +
     '<div class="chico">' + esc(x.texto) + '</div><div class="acc">' +
-    (x.accion && !x.protegido ? '<button class="mini pri" data-xi="' + i + '">' + esc((ACC[x.accion.accion] || {}).titulo || x.accion.accion) + "</button>" : "") +
+    (x.accion && !x.protegido ? '<button class="mini pri" data-xi="' + i + '">' + esc(x.accion.titulo || (ACC[x.accion.accion] || {}).titulo || x.accion.accion) + "</button>" : "") +
     (x.slug && x.tipo === "asistente" ? '<button class="mini" data-xasist="' + esc(x.slug) + '">Ver en asistente</button>' : "") +
     (x.archivable ? '<button class="mini" data-xarch="' + esc(x.archivo) + '">Archivar</button>' : "") +
     "</div></div>").join("");
@@ -322,6 +323,7 @@ $("#xlista").onclick = e => {
   else if (b.dataset.xarch) correrAccion({accion: "archivar", archivo: b.dataset.xarch, slug: null, n: null, opciones: {}}, false);
 };
 $("#xact").onclick = cargarExternos;
+$("#xrec").onclick = () => correrAccion({accion: "trabajos", slug: null, n: null, opciones: {"--reconciliar": true}}, false);
 // ---------------------------------------------------------------- tablero (E.2, E.3)
 function visible(k, a, t, sa) {
   if (a.id === "slug" && !t.slug) return false;
