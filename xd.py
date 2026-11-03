@@ -227,7 +227,7 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver")
+              "plantilla", "notebooks", "ver", "cola_trabajos")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia")      # necesitan el contenedor (torch, rutas /app)
 
 

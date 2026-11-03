@@ -20,7 +20,7 @@ Colab de preetiquetado o entrenamiento deja el trabajo "en espera" para siempre;
 - Archivo `datos/trabajos.sqlite` en el disco local del hub, ignorado en Git. **Nunca en Drive**: un SQLite
   sincronizado por Drive se corrompe.
 - Solo lo usa el host (`xd.py`, `tablero.py`, `ui.py`); el contenedor del motor no lo monta.
-- Modulo puro `motor/cola_trabajos.py` (solo `sqlite3` de la biblioteca estandar, sin red), como `buzon.py`.
+- Modulo `motor/cola_trabajos.py` (solo biblioteca estandar: `sqlite3`, sin red); no es puro porque escribe la base.
 - Conexion con `journal_mode=WAL` y `busy_timeout` (la UI lee mientras un comando de `xd.py` escribe; P.6 suma
   usuarios). Transacciones cortas.
 - Version del esquema en `PRAGMA user_version`; una migracion por version, nunca a mano.

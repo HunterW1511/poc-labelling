@@ -9,7 +9,8 @@ Lee primero: `README.md` (que es y como se usa), el contexto del piloto (vive fu
 - `motor/` (contenedor, montado en /app): servicio (`_wsgi.py`, `model.py`, `cola.py`, `interactivo.py`, `config.py`),
   proyectos (`spec.py`, `generar.py`, `crear_proyecto.py`, `borrar_proyecto.py`, `sincronizar.py`, `plan.py`),
   datos (`muestra`, `diagnostico`, `correccion`, `registro`, `hijo`, `lote`, `exportar_*`, `importar_lote`,
-  `aceptacion`), asistente (`esquema_llm`, `asistente`, `llm_ollama`, `trabajo`, `buzon`, `comparar`, `banco_asistente`).
+  `aceptacion`), asistente (`esquema_llm`, `asistente`, `llm_ollama`, `trabajo`, `buzon`, `comparar`, `banco_asistente`),
+  hub (`cola_trabajos`: SQLite local en `datos/`, solo lo usa el host, nunca en Drive).
 - Modulos puros (sin red ni disco, corren en host y Colab): `spec`, `perfil`, `plan`, `esquema_llm`, `asistente`,
   `colores`, `comparar`, `banco_asistente`, `cuadernos`.
 - `notebooks/`: cuadernos de Colab. `motor/fixtures/`: datos fijos de tests. `_archivo/`: codigo muerto (no versionado).
