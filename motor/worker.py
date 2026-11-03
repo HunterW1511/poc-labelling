@@ -132,7 +132,7 @@ def _preetiquetado(d, salida, stem, t, cache, op):
 def _entrenamiento(d, salida, stem, t, cache, op):
     import entrenar
     return entrenar.entrenar(d, salida, t.get("parametros") or {}, proyecto=t.get("proyecto"), dataset=f"{stem}.zip",
-                             YOLO=op.get("YOLO"))
+                             YOLO=op.get("YOLO"), runs=op.get("runs"))
 
 
 def _precodificacion(d, salida, stem, t, cache, op):
@@ -145,7 +145,8 @@ EJECUTORES = {"asistente": _asistente, "preetiquetado": _preetiquetado, "entrena
 
 def procesar(d, salida, cache=None, stem=None, ent=None, ejecutores=None, **op):
     """Procesa el trabajo extraido en d y escribe en salida. -> estado (dict).
-    Idempotente: si ya hay <stem>.estado.json lo devuelve sin repetir. op: inyecciones (llm, YOLO, sam3_pt, device)."""
+    Idempotente: si ya hay <stem>.estado.json lo devuelve sin repetir.
+    op: runs (carpeta de corridas; defecto salida/runs), sam3_pt, device e inyecciones de prueba (llm, YOLO)."""
     d, salida = Path(d), Path(salida)
     stem = stem or d.name
     salida.mkdir(parents=True, exist_ok=True)

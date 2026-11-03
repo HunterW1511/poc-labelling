@@ -166,7 +166,7 @@ def cmd_lote_exportar(a):
     shutil.copy2(zp, drive)
     print(f"Copiado a Drive: {drive / zp.name}")
     _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
-    print("Siguiente: en Colab corre la celda 2; luego  python xd.py lote-importar")
+    print("Siguiente: en Colab corre worker.ipynb (celda 2); luego Reconciliar y  python xd.py lote-importar")
     return 0
 
 
@@ -340,6 +340,16 @@ def cmd_cuadernos(a):
                 drv.mkdir(parents=True, exist_ok=True)
                 fd.write_text(C.texto(r), encoding="utf-8", newline="\n")
                 print("      -> Drive actualizado")
+    for n in C.RETIRADOS:                       # P.2.4: cuadernos viejos que siguen en Drive
+        fd = drv / n
+        if fd.exists():
+            print(f"  {n:<22} retirado (lo reemplaza worker.ipynb); con --llevar se mueve a {drv / '_archivo'}")
+            if a.llevar:
+                cambios += 1
+                if a.aplicar:
+                    (drv / "_archivo").mkdir(exist_ok=True)
+                    shutil.move(str(fd), str(drv / "_archivo" / n))
+                    print("      -> archivado")
     if (a.traer or a.llevar) and cambios and not a.aplicar:
         print("SOLO REPORTE: usa --aplicar")
     return 0
@@ -625,7 +635,7 @@ def cmd_asistente(a):
         _en_cola(zp.name, _q_reemplazar, a.slug, zp.name)
     print(f"  audio: {e['audio'] or 'no'} | texto: {len(e['texto'])} car. | vocabulario: {e['vocabulario'] or 'no'}"
           f" | respuestas: {'si' if e['respuestas'] else 'no'} | previa: {'si' if previa else 'no'} | {e['modelo_llm']}")
-    print("Siguiente: en Colab corre asistente.ipynb (celda 2); luego  python xd.py asistente-importar " + a.slug)
+    print("Siguiente: en Colab corre worker.ipynb (celda 2); luego  python xd.py asistente-importar " + a.slug)
     return 0
 
 
@@ -859,19 +869,22 @@ def _reintentar(C, a):
         carpeta = _carpetas_transporte().get(C.CARPETA.get(t["tipo"], ""))
         if carpeta is None:
             raise SystemExit(f"No encuentro la carpeta de {t['tipo']} en Drive")
-        err = carpeta / f"{t['archivo'][:-4]}_error.txt"
-        dest = carpeta / "_archivo" / f"{err.stem}_{time.strftime('%Y%m%d-%H%M%S')}.txt"
+        stem, sello = t["archivo"][:-4], time.strftime("%Y%m%d-%H%M%S")
+        # el _error.txt y el .estado.json (P.2.4: el worker se salta lo que ya tiene estado) van a _archivo/
+        mover = [(f, carpeta / "_archivo" / f"{f.name[:-len(suf)]}_{sello}{suf}")
+                 for f, suf in ((carpeta / f"{stem}_error.txt", ".txt"), (carpeta / f"{stem}.estado.json", ".json"))
+                 if f.is_file()]
         hay_zip = (carpeta / t["archivo"]).is_file()
-        if err.is_file():
-            print(f"{'moviendo' if a.aplicar else 'MOVERIA'} {err} -> {dest}")
+        for f, dest in mover:
+            print(f"{'moviendo' if a.aplicar else 'MOVERIA'} {f} -> {dest}")
         print(f"trabajo {t['id']}: error -> pendiente" + (" -> enviado (el zip sigue en Drive)" if hay_zip else
               f"; AVISO: {t['archivo']} ya no esta en {carpeta}, se queda pendiente"))
         if not a.aplicar:
             print("SOLO REPORTE: usa --aplicar para reintentar")
             return 0
-        if err.is_file():
+        for f, dest in mover:
             dest.parent.mkdir(exist_ok=True)
-            shutil.move(str(err), str(dest))
+            shutil.move(str(f), str(dest))
         t = C.mover(con, t["id"], "pendiente", desde="error", detalle="reintento")
         if hay_zip:
             t = C.mover(con, t["id"], "enviado", desde="pendiente", detalle="reintento")
@@ -904,8 +917,10 @@ def _reconciliar(C, a):
             print(f"SOLO REPORTE: {len(r['acciones'])} accion(es); usa --aplicar para escribirlas en {TRABAJOS_DB}")
             return 0
         def leer_error(nombre):
-            f = c["asistente"] / nombre if c["asistente"] else None
-            return f.read_text(encoding="utf-8", errors="replace") if f and f.is_file() else nombre
+            for d in (c["asistente"], c["lotes"], c["datasets"]):
+                if d and (d / nombre).is_file():
+                    return (d / nombre).read_text(encoding="utf-8", errors="replace")
+            return nombre
         hechas, av = C.aplicar(con, r["acciones"], leer_error=leer_error)
         for v in av:
             print(f"AVISO: {v}")

@@ -2,7 +2,8 @@
 en Colab. PURO, biblioteca estandar. limpiar(nb) quita salidas y metadatos personales; diferencias() compara codigo."""
 import copy, json
 
-NOMBRES = ("asistente.ipynb", "preetiquetado.ipynb", "entrenamiento.ipynb")
+NOMBRES = ("worker.ipynb",)
+RETIRADOS = ("asistente.ipynb", "preetiquetado.ipynb", "entrenamiento.ipynb")   # P.2.4: los reemplaza worker.ipynb
 
 
 def limpiar(nb):

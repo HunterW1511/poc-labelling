@@ -22,7 +22,7 @@ La primera vez que se usa SAM 3 tras arrancar, el motor tarda de 3 a 7 minutos e
 Opcion A, con el asistente (voz o texto):
 1. En la tarjeta **Asistente** escribe un slug (minusculas, digitos, `_` o `-`), graba la descripcion del caso
    (que objetos, cuantos caben por foto, que carpetas de fotos vas a tomar) y pulsa **Enviar a Colab**.
-2. En Colab abre `asistente.ipynb` con entorno **T4 GPU**: celda 1 (una vez por sesion) y celda 2.
+2. En Colab abre `worker.ipynb` con entorno **T4 GPU**: celda 1 (una vez por sesion) y celda 2.
 3. En la UI pulsa **Ver ultimo resultado**. Si hay preguntas, respondelas y envia de nuevo (continuar).
 4. **Revisar y aplicar spec** (`asistente-importar SLUG --aplicar`).
 
@@ -47,7 +47,8 @@ La carpeta de tipo negativo es fondo SIN objetos. Nunca personas al fondo de nin
 
 ### 2.4 Pre-etiquetar una muestra
 1. **Pre-etiquetar muestra** (`preetiquetar N --muestra 30`): deja un lote en Drive (`PoC-Labelling/lotes`).
-2. En Colab abre `preetiquetado.ipynb` (T4): celda 1 y celda 2. **Pasos externos** en la UI muestra si ya termino.
+2. En Colab abre `worker.ipynb` (T4): celda 1 y celda 2. **Pasos externos** en la UI muestra si ya termino
+   (si dice "cambios sin guardar", pulsa **Reconciliar**).
 3. **Importar predicciones** (`lote-importar --fijar-version`).
 
 ### 2.5 Revisar en Label Studio
@@ -57,7 +58,8 @@ vuelve a hacer clic. El KPI es el conteo exacto por foto: que no falte ni sobre 
 
 ### 2.6 Entrenar el modelo hijo
 1. **Exportar dataset** (`dataset N --drive`).
-2. En Colab abre `entrenamiento.ipynb` (T4), pon `PROYECTO = N` en la celda 1 y corre las celdas 1, 2 y 3.
+2. En Colab abre `worker.ipynb` (T4) y corre las celdas 1 y 2: entrena el dataset mas reciente del proyecto.
+   Los parametros (epocas, imgsz, modelo...) se eligen al exportar: `dataset N --drive --epochs 50`.
 3. **Registrar modelo** (`registrar N --run ultimo --activar`).
 
 ### 2.7 Mas tareas con el hijo

@@ -88,6 +88,7 @@ def test_asistente_continuar_importar_y_reintentar():
         assert _uno("asistente", z2.name)["estado"] == "enviado"
         # falla en Colab -> error -> reintentar (reporte no cambia nada; --aplicar mueve el _error.txt)
         (bz / f"{z2.stem}_error.txt").write_text("Traceback: boom", encoding="utf-8")
+        (bz / f"{z2.stem}.estado.json").write_text('{"ok": false}', encoding="utf-8")      # lo deja el worker
         _reconciliar()
         t2 = _uno("asistente", z2.name)
         assert t2["estado"] == "error" and "boom" in t2["error"]
@@ -100,6 +101,7 @@ def test_asistente_continuar_importar_y_reintentar():
         t2 = _uno("asistente", z2.name)
         assert rc == 0 and t2["estado"] == "enviado" and t2["intentos"] == 1, out
         assert not (bz / f"{z2.stem}_error.txt").exists() and list((bz / "_archivo").glob(f"{z2.stem}_error_*.txt"))
+        assert not (bz / f"{z2.stem}.estado.json").exists() and list((bz / "_archivo").glob(f"{z2.stem}.estado_*.json"))
         # Colab lo procesa bien; asistente-importar --aplicar marca importado ESE trabajo
         _colab_asistente(bz, z2)
         rc, out = _correr(xd.cmd_asistente_importar, NS(slug="prueba", aplicar=True, forzar=False, comparar=""))

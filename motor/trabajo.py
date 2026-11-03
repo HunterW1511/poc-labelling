@@ -1,4 +1,4 @@
-"""Etapa C.4: ejecutor del asistente. VIAJA en el zip y corre en Colab (lo llama asistente.ipynb).
+"""Etapa C.4: ejecutor del asistente. VIAJA en el zip y corre en Colab o Kaggle (lo llama worker.py).
 procesar(d) lee entrada.json, transcribe el audio (faster-whisper), libera la memoria y genera la spec con el
 LLM (Ollama). Usa GPU si hay; si no, CPU (mas lento). Nunca dos modelos pesados cargados a la vez.
 Importable en el host (tests) sin GPU."""

@@ -156,7 +156,7 @@ def siguiente(t):
         return _sig("", "Proyecto protegido: solo lectura")
     a = t.get("asistente") or {}
     if a.get("ultimo") == "pendiente":
-        return _sig("colab", "Esperando a Colab: abre asistente.ipynb y corre la celda 2")
+        return _sig("colab", "Esperando a Colab: abre worker.ipynb y corre la celda 2")
     if a.get("ultimo") == "error":
         return _sig("cli", "El asistente fallo en Colab: revisa el error", f"python xd.py asistente-importar {s}")
     if a.get("ultimo") == "resultado" and not a.get("aplicada"):
@@ -177,7 +177,7 @@ def siguiente(t):
     tareas, anot = ls.get("task_number") or 0, ls.get("num_tasks_with_annotations") or 0
     tienes = sum(f["tienes"] for f in fotos)
     if lo.get("en_colab"):
-        return _sig("colab", "Esperando a Colab: notebook de pre-etiquetado, celda 2")
+        return _sig("colab", "Esperando a Colab: abre worker.ipynb y corre la celda 2")
     if lo.get("sin_importar"):
         return _sig("cli", "Importa las predicciones de Colab", "python xd.py lote-importar --fijar-version")
     if s and fotos and any(f["tienes"] == 0 for f in fotos):
@@ -193,7 +193,7 @@ def siguiente(t):
         if anot == 0:
             return _sig("label_studio", "Revisa la muestra en Label Studio y da Submit")
         if t.get("datasets"):
-            return _sig("colab", "Entrena en Colab con el ultimo dataset (o exporta otro si revisaste mas)",
+            return _sig("colab", "Entrena en Colab (worker.ipynb) con el ultimo dataset (o exporta otro si revisaste mas)",
                         f"python xd.py dataset {n} --drive")
         return _sig("cli", "Exporta el dataset para entrenar", f"python xd.py dataset {n} --drive")
     if tareas > anot:
@@ -255,9 +255,9 @@ def asistente_detalle(slug):
 EJECUTOR = xd.ENV.get("EJECUTOR", "colab")
 # Pasos externos: al desplegar (RunPod/AWS) solo se agrega otra columna aqui; la UI no cambia
 PASOS = {
-    "asistente": {"colab": "Colab: abre asistente.ipynb y corre la celda 2 (la 1 si la sesion es nueva)"},
-    "preetiquetado": {"colab": "Colab: abre el notebook de pre-etiquetado y corre la celda 2 (la 1 si la sesion es nueva)"},
-    "entrenamiento": {"colab": "Colab: notebook de entrenamiento; en la celda 1 pon DS = '{archivo}' y PROYECTO = {n}; corre las celdas 1, 2 y 3"},
+    "asistente": {"colab": "Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva)"},
+    "preetiquetado": {"colab": "Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva)"},
+    "entrenamiento": {"colab": "Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva); entrena el dataset mas reciente del proyecto con los parametros de xd.py dataset"},
 }
 
 

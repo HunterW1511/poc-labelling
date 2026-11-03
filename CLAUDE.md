@@ -10,10 +10,11 @@ Lee primero: `README.md` (que es y como se usa), el contexto del piloto (vive fu
   proyectos (`spec.py`, `generar.py`, `crear_proyecto.py`, `borrar_proyecto.py`, `sincronizar.py`, `plan.py`),
   datos (`muestra`, `diagnostico`, `correccion`, `registro`, `hijo`, `lote`, `exportar_*`, `importar_lote`,
   `aceptacion`), asistente (`esquema_llm`, `asistente`, `llm_ollama`, `trabajo`, `buzon`, `comparar`, `banco_asistente`),
-  hub (`cola_trabajos`: SQLite local en `datos/`, solo lo usa el host, nunca en Drive).
+  hub (`cola_trabajos`: SQLite local en `datos/`, solo lo usa el host, nunca en Drive),
+  worker (`worker`, `entrenar`: viajan en cada zip; contrato en `docs/worker_contrato.md`).
 - Modulos puros (sin red ni disco, corren en host y Colab): `spec`, `perfil`, `plan`, `esquema_llm`, `asistente`,
   `colores`, `comparar`, `banco_asistente`, `cuadernos`.
-- `notebooks/`: cuadernos de Colab. `motor/fixtures/`: datos fijos de tests. `_archivo/`: codigo muerto (no versionado).
+- `notebooks/worker.ipynb`: unico cuaderno de Colab (lanza `worker.py`). `motor/fixtures/`: datos fijos de tests. `_archivo/`: codigo muerto (no versionado).
 
 ## Reglas de oro
 1. **Nucleo intocable sin decidir la migracion:** `motor/reglas.py`, `motor/pipeline.py` y `leer_perfil`

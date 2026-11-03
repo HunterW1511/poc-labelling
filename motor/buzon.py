@@ -1,5 +1,5 @@
 """Etapa C.4: buzon del asistente en Drive (PURO, solo biblioteca estandar; lo usa xd.py en el host).
-armar() -> zip de trabajo (codigo + entrada.json + audio) que procesa el notebook asistente.ipynb.
+armar() -> zip de trabajo (codigo + entrada.json + audio) que procesa motor/worker.py (cuaderno worker.ipynb o Kaggle).
 resultados() / errores() / preparar_spec() leen lo que deja Colab: <trabajo>_resultado.json o _error.txt."""
 import copy, json, re, time, zipfile
 from pathlib import Path

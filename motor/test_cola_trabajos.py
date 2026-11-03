@@ -139,6 +139,10 @@ def test_detectar_por_tipo():
     assert d("entrenamiento", "dataset_p4_x.zip", {**a, "registrados": set()})[0] == "listo"
     assert d("entrenamiento", "dataset_p4_x.zip", {**a, "runs": None}) is None
     assert d("precodificacion", "x.zip", a) is None
+    # P.2.4: el worker deja _error.txt tambien en lotes y datasets
+    a3 = {**a, "lotes": {"lote_p3_e.zip": 1, "lote_p3_e_error.txt": 2}, "datasets": {"dataset_p9_e.zip": 1, "dataset_p9_e_error.txt": 2}}
+    assert d("preetiquetado", "lote_p3_e.zip", a3) == ("error", "lote_p3_e_error.txt")
+    assert d("entrenamiento", "dataset_p9_e.zip", a3) == ("error", "dataset_p9_e_error.txt")
 
 
 def test_reconciliar_mueve_avisa_y_no_escribe():

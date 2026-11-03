@@ -184,11 +184,12 @@ def test_entrenamiento_por_el_worker():
         (d / "trabajo.json").write_text(json.dumps(worker.encabezado("entrenamiento", stem, proyecto=4,
                                                                      parametros={"epochs": 3, "imgsz": 640})),
                                         encoding="utf-8")
-        e = worker.procesar(d, t / "out", ent=ENT, YOLO=YOLOFalso)
+        e = worker.procesar(d, t / "out", ent=ENT, YOLO=YOLOFalso, runs=t / "runs")       # Drive: runs/ aparte
         assert e["ok"] and e["resultado"] == f"runs/{stem}", e
+        assert (t / "out" / f"{stem}.estado.json").exists() and not (t / "out" / "runs").exists()
         assert YOLOFalso.visto["epochs"] == 3 and YOLOFalso.visto["imgsz"] == 640 and YOLOFalso.visto["modelo"] == "yolo11n.pt"
         assert json.loads((d / "det" / "data.yaml").read_text().splitlines()[0][6:]) == str((d / "det").resolve())
-        met = json.loads((t / "out" / "runs" / stem / "weights" / "metricas.json").read_text(encoding="utf-8"))
+        met = json.loads((t / "runs" / stem / "weights" / "metricas.json").read_text(encoding="utf-8"))
         assert met["conteo"] == {"exactas": 1, "imagenes": 2, "tasa": 0.5} and met["proyecto"] == 4
         assert met["por_clase"]["base"]["error_abs"] == 1 and met["por_clase"]["tornillo"]["ap50"] == 0.9
         assert met["epocas_ejecutadas"] == 2 and met["dataset"] == f"{stem}.zip"

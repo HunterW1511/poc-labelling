@@ -208,6 +208,8 @@ def detectar(tipo, archivo, a):
         pred = f"{s}_pred.json"
         if pred in dr:
             return ("importado" if pred in (a.get("lotes_local") or ()) else "listo"), pred
+        if f"{s}_error.txt" in dr:                                      # P.2.4: el worker deja error para todos
+            return "error", f"{s}_error.txt"
     elif tipo == "entrenamiento":
         runs = a.get("runs")
         if runs is None:
@@ -216,6 +218,8 @@ def detectar(tipo, archivo, a):
         if hechos:
             reg = a.get("registrados") or ()
             return ("importado" if any(f"runs/{r}" in reg for r in hechos) else "listo"), hechos[-1]
+        if f"{s}_error.txt" in dr:
+            return "error", f"{s}_error.txt"
     else:
         return None
     if archivo in archivados:

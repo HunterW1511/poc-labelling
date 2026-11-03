@@ -4,7 +4,7 @@ from pathlib import Path
 
 M = Path(__file__).resolve().parent
 NB = M.parent / "notebooks"
-ESPERADOS = {"asistente.ipynb", "preetiquetado.ipynb", "entrenamiento.ipynb"}
+ESPERADOS = {"worker.ipynb"}   # P.2.4: un solo cuaderno (lanza motor/worker.py de cada zip)
 SOSPECHOSO = re.compile(r"hf_[A-Za-z0-9]{20,}|(?<![@\w])[0-9a-f]{40}\b|Token [A-Za-z0-9]|[\w.+-]+@[\w-]+\.[a-z]{2,}|"
                         r"G:\\\\|Mi unidad|/Users/|C:\\\\Users|executionInfo|provenance", re.I)
 req = (M / "requirements.txt").read_text(encoding="utf-8")

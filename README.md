@@ -16,7 +16,7 @@ Manual de uso paso a paso: [docs/manual.md](docs/manual.md).
 | `xd.py`, `ui.py`, `tablero.py` | Host | CLI (fuente de verdad), UI en http://127.0.0.1:8090 y tablero de solo lectura |
 | Cola de trabajos (`datos/trabajos.sqlite`) | Host (disco local, nunca en Drive) | Estado de cada trabajo externo (asistente, pre-etiquetado, entrenamiento): sobrevive a reinicios; Drive solo transporta. Diseno: [docs/cola_trabajos.md](docs/cola_trabajos.md) |
 | `capturar.py`, `ver_cajas.py` | Host | Webcam: captura de fotos y modelo en vivo (OpenVINO o PyTorch) |
-| Cuadernos (`notebooks/`) | Colab T4 | Asistente (Whisper + qwen2.5:14b), pre-etiquetado de lotes (SAM 3) y entrenamiento (YOLO). Intercambio por Drive para escritorio |
+| Worker (`motor/worker.py`) + `notebooks/worker.ipynb` | Colab T4 (Kaggle en P.2) | Un solo codigo para asistente (Whisper + qwen2.5:14b), pre-etiquetado (SAM 3) y entrenamiento (YOLO); viaja en cada zip. Contrato: [docs/worker_contrato.md](docs/worker_contrato.md). Intercambio por Drive para escritorio |
 
 Direccion del piloto: el trabajo pesado se va a un worker en Kaggle; el hub queda con
 Label Studio, la UI y el clic interactivo usando la cache de SAM 3 que precodifica el worker.
@@ -29,18 +29,18 @@ Label Studio, la UI y el clic interactivo usando la cache de SAM 3 que precodifi
    `PoC-Labelling/` en Drive (los usa Colab).
 4. `docker compose up -d` y `pip install -r requirements.txt`.
 5. `python xd.py estado` (servicios UP) y `python xd.py test` (todo en verde).
-6. `python xd.py cuadernos --llevar --aplicar` copia los cuadernos a `Colab Notebooks` en tu Drive.
+6. `python xd.py cuadernos --llevar --aplicar` copia `worker.ipynb` a `Colab Notebooks` en tu Drive (y archiva los cuadernos viejos).
 
 ## Flujo de un proyecto
 
 | Paso | Comando | Donde corre |
 | --- | --- | --- |
-| 1. Caso -> spec | `asistente SLUG --audio X` / `--texto X`, luego `asistente-importar SLUG [--aplicar]`. Sin asistente: `spec-nueva SLUG --titulo T [--aplicar]`, editar y `validar SLUG` | Colab (cuaderno asistente) o a mano |
+| 1. Caso -> spec | `asistente SLUG --audio X` / `--texto X`, luego `asistente-importar SLUG [--aplicar]`. Sin asistente: `spec-nueva SLUG --titulo T [--aplicar]`, editar y `validar SLUG` | Colab (`worker.ipynb`) o a mano |
 | 2. Crear proyecto | `crear-proyecto SLUG [--aplicar]` (se niega si la spec tiene errores) | Host + Label Studio |
 | 3. Fotos | `plan SLUG`, `python capturar.py SLUG`, `sincronizar SLUG` | Host (webcam) |
-| 4. Pre-etiquetado | `preetiquetar N --muestra 30 [--aplicar]`, cuaderno preetiquetado, `lote-importar --fijar-version` | Colab |
+| 4. Pre-etiquetado | `preetiquetar N --muestra 30 [--aplicar]`, `worker.ipynb`, `lote-importar --fijar-version` | Colab |
 | 5. Revision | Label Studio + clic de SAM 3 | Motor (CPU) |
-| 6. Modelo hijo | `dataset N --drive`, cuaderno entrenamiento (poner PROYECTO), `registrar N --run ultimo --activar` | Colab |
+| 6. Modelo hijo | `dataset N --drive [--epochs E ...]`, `worker.ipynb`, `registrar N --run ultimo --activar` | Colab |
 | 7. Mas tareas | `preetiquetar N --modo hijo` | Colab |
 | 8. Validacion | `aceptacion N`, `modelos N` | Host y contenedor |
 | 9. En vivo | `ver N [--backend auto|pt|openvino]` | Host |

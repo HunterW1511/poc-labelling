@@ -265,8 +265,8 @@ async function cargarAsistente() {
   const st = d.estado || {}, r = d.resultado;
   let h = "";
   if (d.error) h += '<p class="avisos">' + esc(d.error) + "</p>";
-  if (st.ultimo === "pendiente") h += '<div class="sig">Esperando a Colab: abre asistente.ipynb y corre la celda 2 (la 1 si la sesion es nueva). Esta vista se revisa sola cada 15 s.</div>';
-  if (st.ultimo === "error") h += '<div class="sig">El ultimo trabajo fallo en Colab. Para reintentar, borra su _error.txt en Drive y corre otra vez la celda 2.</div><pre class="mini">' + esc(d.error_colab || "") + "</pre>";
+  if (st.ultimo === "pendiente") h += '<div class="sig">Esperando a Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva). Esta vista se revisa sola cada 15 s.</div>';
+  if (st.ultimo === "error") h += '<div class="sig">El ultimo trabajo fallo en Colab. Para reintentar usa Reintentar en Pasos externos (trabajos --reintentar) y corre otra vez la celda 2.</div><pre class="mini">' + esc(d.error_colab || "") + "</pre>";
   if (!r && !st.ultimo) h += '<p class="chico">Sin trabajos del asistente para ' + esc(slug) + ".</p>";
   if (r) {
     h += '<p class="chico">Resultado ' + esc(r.trabajo) + " | stt " + esc(r.stt || "no") + " | llm " + esc(r.llm_seg) + " s" +

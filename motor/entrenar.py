@@ -68,11 +68,13 @@ def _etiquetas(f):
         if f.is_file() else Counter()
 
 
-def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None):
-    """Entrena, valida y mide el conteo exacto en val. -> 'runs/<RUN>' (relativo a salida)."""
+def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None, runs=None):
+    """Entrena, valida y mide el conteo exacto en val. -> 'runs/<RUN>'.
+    runs: carpeta de corridas (defecto salida/runs; en Drive, PoC-Labelling/runs como siempre)."""
     if YOLO is None:
         from ultralytics import YOLO
     d, salida = Path(d), Path(salida)
+    runs = Path(runs) if runs else salida / "runs"
     p = parametros(params)
     fmt = p["formato"]
     yml = preparar_yaml(d, fmt)
@@ -83,9 +85,9 @@ def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None):
     print(f"Dataset {dataset or stem} | run {run_n} | modelo {p['modelo']} | imagenes {resumen.get('imagenes')} | "
           f"correcciones {resumen.get('n_correcciones')}", flush=True)
     YOLO(p["modelo"]).train(data=str(yml), epochs=p["epochs"], imgsz=p["imgsz"], batch=p["batch"],
-                            patience=p["patience"], plots=True, project=str(salida / "runs"), name=run_n,
+                            patience=p["patience"], plots=True, project=str(runs), name=run_n,
                             exist_ok=True)
-    run = salida / "runs" / run_n
+    run = runs / run_n
     best = YOLO(str(run / "weights" / "best.pt"))
     names = best.names
     m = best.val(data=str(yml), imgsz=p["imgsz"], plots=False)
