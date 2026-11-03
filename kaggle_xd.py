@@ -126,6 +126,115 @@ def esperar_listo(dataset, limite=3600, cada=20, correr=subprocess.run, dormir=t
     return None
 
 
+# ------------------------------------------------------------------ P.2.7: envios y kernel
+SLUG_ENVIOS, TITULO_ENVIOS = "xd-envios", "xd-envios trabajos"
+SLUG_KERNEL = "xd-worker"                       # el titulo debe "slugificar" al slug: se usa el mismo
+ACTIVOS = ("queued", "running", "new_script", "cancel_requested")
+TIPO_DE_CARPETA = {"asistente": "asistente", "lotes": "preetiquetado", "datasets": "entrenamiento"}
+CARPETAS_SALIDA = ("asistente", "lotes", "datasets", "runs")
+
+
+def _enlazar(src, dst):
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def armar_envio(zips, destino, usuario_, nombre, operador):
+    """zips: [(carpeta, Path)] -> carpeta con los zips + envio.json + dataset-metadata.json. -> envio (dict)."""
+    destino = Path(destino)
+    shutil.rmtree(destino, ignore_errors=True)
+    destino.mkdir(parents=True)
+    trabajos = []
+    for carpeta, zp in zips:
+        zp = Path(zp)
+        if carpeta not in TIPO_DE_CARPETA:
+            raise ValueError(f"carpeta {carpeta!r} sin tipo de trabajo")
+        _enlazar(zp, destino / zp.name)
+        trabajos.append({"tipo": TIPO_DE_CARPETA[carpeta], "archivo": zp.name, "bytes": zp.stat().st_size})
+    if not trabajos:
+        raise ValueError("envio vacio")
+    envio = {"esquema": 1, "envio": nombre, "operador": operador, "creado": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+             "trabajos": trabajos}
+    (destino / "envio.json").write_text(json.dumps(envio, ensure_ascii=True, indent=1), encoding="utf-8")
+    meta = metadata(usuario_, SLUG_ENVIOS, TITULO_ENVIOS)
+    (destino / "dataset-metadata.json").write_text(json.dumps(meta, ensure_ascii=True, indent=1), encoding="utf-8")
+    return envio
+
+
+def kernel_metadata(usuario_):
+    return {"id": f"{usuario_}/{SLUG_KERNEL}", "title": SLUG_KERNEL, "code_file": "lanzador.py", "language": "python",
+            "kernel_type": "script", "is_private": True, "enable_gpu": True, "enable_internet": True,
+            "dataset_sources": [f"{usuario_}/{SLUG_PESOS}", f"{usuario_}/{SLUG_ENVIOS}"],
+            "competition_sources": [], "kernel_sources": [], "model_sources": []}
+
+
+def armar_kernel(lanzador, destino, usuario_):
+    destino = Path(destino)
+    shutil.rmtree(destino, ignore_errors=True)
+    destino.mkdir(parents=True)
+    shutil.copy2(lanzador, destino / "lanzador.py")
+    meta = kernel_metadata(usuario_)
+    (destino / "kernel-metadata.json").write_text(json.dumps(meta, ensure_ascii=True, indent=1), encoding="utf-8")
+    return meta
+
+
+def subir_envio(carpeta, existe, nombre, correr=subprocess.run):
+    """Una version del dataset privado xd-envios; -d borra las versiones viejas (no se acumulan fotos en Kaggle)."""
+    if existe:
+        return cli("datasets", "version", "-p", carpeta, "-m", nombre, "-r", "skip", "-d", correr=correr)
+    return cli("datasets", "create", "-p", carpeta, "-r", "skip", correr=correr)
+
+
+def push_kernel(carpeta, limite_s=0, acelerador="NvidiaTeslaT4", correr=subprocess.run):
+    args = ["kernels", "push", "-p", carpeta, "--accelerator", acelerador] + (["-t", int(limite_s)] if limite_s else [])
+    return cli(*args, correr=correr, timeout=600)
+
+
+ESTADO = re.compile(r'has status "(?:\w+\.)?(\w+)"')
+FALLO = re.compile(r'Failure message: "(.*)"', re.S)
+
+
+def estado_kernel(kernel, correr=subprocess.run):
+    """-> (estado en minusculas o None si no existe/no hay acceso, mensaje de fallo o salida)."""
+    rc, out = cli("kernels", "status", kernel, correr=correr, timeout=120)
+    m = ESTADO.search(out)
+    if rc or not m:
+        return None, out.strip()[-300:]
+    f = FALLO.search(out)
+    return m.group(1).lower(), (f.group(1).strip() if f else "")
+
+
+def bajar_salida(kernel, destino, correr=subprocess.run):
+    destino = Path(destino)
+    shutil.rmtree(destino, ignore_errors=True)
+    destino.mkdir(parents=True)
+    return cli("kernels", "output", kernel, "-p", destino, "-o", "-q", correr=correr, timeout=3600)
+
+
+def archivos_salida(salida):
+    """Archivos de la salida que van al espejo: [(ruta relativa, Path)] solo bajo asistente/lotes/datasets/runs."""
+    salida = Path(salida)
+    return sorted((f.relative_to(salida).as_posix(), f) for c in CARPETAS_SALIDA
+                  for f in (salida / c).rglob("*") if f.is_file())
+
+
+def integrar(salida, espejo):
+    """Copia la salida del kernel al espejo local (mismos nombres que con Drive). -> rutas relativas copiadas."""
+    hechas = []
+    for rel, f in archivos_salida(salida):
+        dst = Path(espejo) / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_name(dst.name + ".tmp")
+        shutil.copy2(f, tmp)
+        tmp.replace(dst)
+        hechas.append(rel)
+    return hechas
+
+
 if __name__ == "__main__":
     print(f"credencial: {credencial() or 'NO HAY'}")
     sys.exit(0)

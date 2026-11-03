@@ -51,7 +51,8 @@ def test_carpeta_de_y_elegir():
     assert T.carpeta_de("lote_p3_x.zip") == "lotes" and T.carpeta_de("dataset_p4_x.zip") == "datasets"
     assert T.carpeta_de("otra.zip") is None
     assert isinstance(T.elegir({}, "."), T.Drive) and isinstance(T.elegir({"TRANSPORTE": "Drive "}, "."), T.Drive)
-    assert "P.2.7" in str(_falla(SystemExit, T.elegir, {"TRANSPORTE": "kaggle"}, "."))
+    k = T.elegir({"TRANSPORTE": "kaggle"}, "raiz")
+    assert isinstance(k, T.Kaggle) and k.raiz == Path("raiz") / "datos" / "kaggle" / "espejo" and k.carpeta("lotes") is None
     _falla(SystemExit, T.elegir, {"TRANSPORTE": "s3"}, ".")
 
 

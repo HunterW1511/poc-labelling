@@ -112,11 +112,22 @@ class Espejo(Transporte):
         return p if p.is_dir() else None
 
 
+class Kaggle(Espejo):
+    """P.2.7: espejo local (datos/kaggle/espejo). enviar deja el zip en el espejo; `xd.py worker --enviar` lo sube
+    (dataset privado xd-envios) y lanza el kernel; `worker --traer` baja la salida al espejo. Asi la reconciliacion,
+    lote-importar, asistente-importar y registrar leen los mismos nombres que con Drive."""
+    nombre = "kaggle"
+
+    def __init__(self, raiz, env):
+        super().__init__(raiz)
+        self.env = env
+
+
 def elegir(env, raiz):
     """Transporte segun TRANSPORTE del .env (defecto drive)."""
     t = (env.get("TRANSPORTE") or "drive").strip().lower()
     if t == "drive":
         return Drive(env)
     if t == "kaggle":
-        raise SystemExit("TRANSPORTE=kaggle llega en P.2.7; por ahora usa TRANSPORTE=drive")
-    raise SystemExit(f"TRANSPORTE={t!r}: debe ser drive (o kaggle desde P.2.7)")
+        return Kaggle(Path(raiz) / "datos" / "kaggle" / "espejo", env)
+    raise SystemExit(f"TRANSPORTE={t!r}: debe ser drive o kaggle")

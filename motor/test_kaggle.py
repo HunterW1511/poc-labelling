@@ -134,6 +134,106 @@ def test_comando_kaggle_pesos_reporte_y_aplicar():
                 os.environ["KAGGLE_CONFIG_DIR"] = cfg
 
 
+def test_envio_kernel_y_estado():
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        (t / "lote_p3_x.zip").write_bytes(b"z1")
+        (t / "asist_s_1.zip").write_bytes(b"z2")
+        e = K.armar_envio([("lotes", t / "lote_p3_x.zip"), ("asistente", t / "asist_s_1.zip")], t / "env", "emi", "envio_1", "emi")
+        assert [x["tipo"] for x in e["trabajos"]] == ["preetiquetado", "asistente"]
+        assert json.loads((t / "env" / "dataset-metadata.json").read_text())["id"] == "emi/xd-envios"
+        assert sorted(f.name for f in (t / "env").iterdir()) == ["asist_s_1.zip", "dataset-metadata.json", "envio.json",
+                                                                  "lote_p3_x.zip"]
+        _falla(ValueError, K.armar_envio, [], t / "env2", "emi", "e", "emi")
+        m = K.kernel_metadata("emi")
+        assert m["is_private"] is True and m["enable_gpu"] is True and m["title"] == "xd-worker"
+        assert m["id"] == "emi/xd-worker" and m["dataset_sources"] == ["emi/xd-pesos", "emi/xd-envios"]
+        K.armar_kernel(RAIZ / "motor" / "lanzador.py", t / "k", "emi")
+        assert sorted(f.name for f in (t / "k").iterdir()) == ["kernel-metadata.json", "lanzador.py"]
+    c = CLI([])
+    K.subir_envio("c", True, "envio_1", correr=c)
+    K.push_kernel("k", limite_s=600, correr=c)
+    assert c.vistos[0] == ["datasets", "version", "-p", "c", "-m", "envio_1", "-r", "skip", "-d"]   # borra versiones viejas
+    assert c.vistos[1] == ["kernels", "push", "-p", "k", "--accelerator", "NvidiaTeslaT4", "-t", "600"]
+    assert K.estado_kernel("emi/xd-worker", correr=CLI([(0, 'emi/xd-worker has status "KernelWorkerStatus.RUNNING"')])) == ("running", "")
+    est, msg = K.estado_kernel("k", correr=CLI([(0, 'k has status "KernelWorkerStatus.ERROR"\nFailure message: "OOM"')]))
+    assert (est, msg) == ("error", "OOM")
+    assert K.estado_kernel("k", correr=CLI([(1, "404 Not Found")]))[0] is None
+
+
+def test_integrar_solo_carpetas_de_trabajo():
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        for rel in ("lotes/lote_p3_x_pred.json", "runs/dataset_p4_x/weights/best.pt", "xd-worker.log", "otra/x.txt"):
+            (t / "sal" / rel).parent.mkdir(parents=True, exist_ok=True)
+            (t / "sal" / rel).write_text("x")
+        hechas = K.integrar(t / "sal", t / "espejo")
+        assert hechas == ["lotes/lote_p3_x_pred.json", "runs/dataset_p4_x/weights/best.pt"]
+        assert (t / "espejo" / "runs" / "dataset_p4_x" / "weights" / "best.pt").exists()
+        assert not (t / "espejo" / "xd-worker.log").exists() and not (t / "espejo" / "otra").exists()
+
+
+def test_comando_worker():
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        (t / "motor").mkdir()
+        shutil.copy2(RAIZ / "motor" / "lanzador.py", t / "motor")
+        esp = t / "datos" / "kaggle" / "espejo" / "lotes"
+        esp.mkdir(parents=True)
+        (esp / "lote_p3_x.zip").write_bytes(b"zip")
+        (t / "cfg").mkdir()
+        (t / "cfg" / "access_token").write_text(TOKEN)
+        nombres = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida")
+        viejo = (xd.RAIZ, xd.ENV, os.environ.get("KAGGLE_CONFIG_DIR"), {n: getattr(K, n) for n in nombres})
+        llamadas, est = [], ["complete"]
+        try:
+            xd.RAIZ, xd.ENV = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}
+            os.environ["KAGGLE_CONFIG_DIR"] = str(t / "cfg")
+            K.estado_kernel = lambda k, **kw: (est[0], "")
+            K.estado_dataset = lambda ds, **kw: "ready"
+            K.subir_envio = lambda c, existe, n, **kw: (llamadas.append(("subir", sorted(p.name for p in Path(c).iterdir()), existe)) or (0, f"ok {TOKEN}"))
+            K.esperar_listo = lambda ds, **kw: 5.0
+            K.push_kernel = lambda c, limite_s=0, **kw: (llamadas.append(("push", json.loads((Path(c) / "kernel-metadata.json").read_text())["is_private"], limite_s)) or (0, "Kernel version 1 successfully pushed"))
+            def bajar(k, dest, **kw):
+                (Path(dest) / "lotes").mkdir(parents=True, exist_ok=True)
+                (Path(dest) / "lotes" / "lote_p3_x_pred.json").write_text("{}")
+                (Path(dest) / "xd-worker.log").write_text(f"log {TOKEN}")
+                return 0, ""
+            K.bajar_salida = bajar
+            def correr(**kw):
+                a = NS(**{"enviar": False, "estado": False, "traer": False, "limite": 0, "aplicar": False, **kw})
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    rc = xd.cmd_worker(a)
+                return rc, out.getvalue()
+            rc, out = correr(enviar=True)
+            assert rc == 0 and "lote_p3_x.zip" in out and "SOLO REPORTE" in out and not llamadas, out
+            rc, out = correr(enviar=True, aplicar=True, limite=30)
+            assert rc == 0 and "OK envio_" in out and TOKEN not in out, out
+            assert llamadas == [("subir", ["dataset-metadata.json", "envio.json", "lote_p3_x.zip"], True), ("push", True, 1800)]
+            assert not (t / "datos" / "kaggle" / "envio").exists() and not (t / "datos" / "kaggle" / "kernel").exists()
+            assert "Nada que enviar" in correr(enviar=True)[1]                       # ya enviado: no se repite
+            (esp / "lote_p3_y.zip").write_bytes(b"zip")
+            est[0] = "running"
+            assert "sigue running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=True, estado=False, traer=False, limite=0, aplicar=True)))
+            assert "esta running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=False, estado=False, traer=True, limite=0, aplicar=False)))
+            est[0] = "complete"
+            rc, out = correr(traer=True)
+            assert "COPIARIA lotes/lote_p3_x_pred.json" in out and TOKEN not in out and not (esp / "lote_p3_x_pred.json").exists(), out
+            rc, out = correr(traer=True, aplicar=True)
+            assert rc == 0 and (esp / "lote_p3_x_pred.json").exists() and not (esp.parent / "xd-worker.log").exists()
+            xd.ENV = {"KAGGLE_USUARIO": "emi"}
+            assert "TRANSPORTE=kaggle" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=True, estado=False, traer=False, limite=0, aplicar=False)))
+        finally:
+            xd.RAIZ, xd.ENV, cfg, f = viejo
+            for n, v in f.items():
+                setattr(K, n, v)
+            if cfg is None:
+                os.environ.pop("KAGGLE_CONFIG_DIR", None)
+            else:
+                os.environ["KAGGLE_CONFIG_DIR"] = cfg
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):
