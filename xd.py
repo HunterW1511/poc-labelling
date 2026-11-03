@@ -23,6 +23,7 @@ ENV = leer_env()
 LS = ENV.get("LS_HOST_URL", "http://127.0.0.1:8080").rstrip("/")
 MOTOR = ENV.get("MOTOR_HOST_URL", "http://127.0.0.1:9090").rstrip("/")
 LOTES_LOCAL = RAIZ / "motor" / "lotes"          # = /app/lotes en el contenedor (MOTOR_DATOS=/app)
+TRABAJOS_DB = Path(ENV.get("TRABAJOS_DB") or RAIZ / "datos" / "trabajos.sqlite")   # P.1: local, nunca en Drive
 
 
 # ----------------------------------------------------------------- utilidades
@@ -659,6 +660,114 @@ def cmd_asistente_importar(a):
     print(f"Siguiente:  python xd.py crear-proyecto {slug}")
     return 0
 
+# ----------------------------------------------------------------- P.1 cola de trabajos
+def _cola_mod():
+    sys.path.insert(0, str(RAIZ / "motor"))
+    import cola_trabajos
+    return cola_trabajos
+
+
+def _cola(crear=True):
+    """Conexion a la cola; None si aun no existe y crear=False (los reportes no crean la base)."""
+    if not crear and not TRABAJOS_DB.exists():
+        return None
+    return _cola_mod().abrir(TRABAJOS_DB)
+
+
+def _carpetas_transporte():
+    """Carpetas de Drive por tipo (None si no existen). No crea nada."""
+    d = ENV.get("LOTES_DRIVE")
+    lotes = Path(d) if d and Path(d).is_dir() else None
+    def carpeta(var, sub):
+        p = Path(ENV[var]) if ENV.get(var) else (lotes.parent / sub if lotes else None)
+        return p if p and p.is_dir() else None
+    return {"asistente": carpeta("ASISTENTE_DRIVE", "asistente"), "lotes": lotes,
+            "datasets": carpeta("DATASETS_DRIVE", "datasets"), "runs": carpeta("RUNS_DRIVE", "runs")}
+
+
+def _archivos_transporte(c):
+    """Nombres (y mtimes) que necesita cola_trabajos.reconciliar(). Solo lectura."""
+    def mt(d):
+        return {f.name: f.stat().st_mtime for f in d.iterdir() if f.is_file()} if d else None
+    def nombres(d):
+        return {f.name for f in d.iterdir()} if d and d.is_dir() else set()
+    reg = set()
+    for f in (RAIZ / "motor" / "modelos").glob("p*/registro.json"):
+        try:
+            ms = json.loads(f.read_text(encoding="utf-8")).get("modelos") or {}
+        except (OSError, ValueError):
+            continue
+        reg |= {str(m.get("origen")) for m in (ms.values() if isinstance(ms, dict) else ms) if isinstance(m, dict)}
+    runs = c["runs"]
+    return {"asistente": mt(c["asistente"]), "asistente_archivo": nombres(c["asistente"] and c["asistente"] / "_archivo"),
+            "lotes": mt(c["lotes"]), "lotes_archivo": nombres(c["lotes"] and c["lotes"] / "_archivo"),
+            "lotes_local": nombres(LOTES_LOCAL), "datasets": mt(c["datasets"]),
+            "datasets_archivo": nombres(c["datasets"] and c["datasets"] / "_archivo"),
+            "runs": {r.name for r in runs.iterdir() if (r / "weights" / "metricas.json").exists()} if runs else None,
+            "registrados": reg,
+            "specs": {f.parent.name: f.stat().st_mtime for f in (RAIZ / "motor" / "proyectos").glob("*/spec.json")}}
+
+
+def _linea_trabajo(t):
+    quien = f"p{t['proyecto']}" if t["proyecto"] is not None else (t["slug"] or "-")
+    err = f"  ERROR: {t['error'][-60:]!r}" if t["error"] else ""
+    return (f"  {t['id']:>4} {t['tipo']:<14}{quien:<10}{t['estado']:<11}{t['actualizado']:<20}"
+            f"{t['intentos']:>3}  {t['archivo']}{err}")
+
+
+def cmd_trabajos(a):
+    C = _cola_mod()
+    if a.reconciliar:
+        return _reconciliar(C, a)
+    con = _cola(crear=False)
+    if con is None:
+        print(f"Aun no hay cola en {TRABAJOS_DB} (se crea con el primer trabajo o con --reconciliar --aplicar)")
+        return 0
+    with con:
+        ts = C.listar(con, tipo=a.tipo or None, estado=a.estado or None, activos=not (a.todos or a.estado))
+    con.close()
+    print(f"Cola {TRABAJOS_DB} | {len(ts)} trabajo(s)" + ("" if a.todos or a.estado else " sin terminar (--todos: todos)"))
+    if ts:
+        print(f"  {'id':>4} {'tipo':<14}{'quien':<10}{'estado':<11}{'actualizado':<20}{'int':>3}  archivo")
+        for t in ts:
+            print(_linea_trabajo(t))
+    return 0
+
+
+def _reconciliar(C, a):
+    c = _carpetas_transporte()
+    con = _cola(crear=a.aplicar)
+    try:
+        ts = C.listar(con) if con else []
+        r = C.reconciliar(ts, _archivos_transporte(c), horas=a.horas)
+        for v in r["avisos"]:
+            print(f"AVISO: {v}")
+        if not r["acciones"]:
+            print("Cola y transporte coinciden: nada que reconciliar")
+            return 0
+        for x in r["acciones"]:
+            if x["op"] == "mover":
+                print(f"  mover   {x['id']:>4} {x['archivo']}: {x['de']} -> {x['a']}" +
+                      (f" ({x['resultado'] or x['error_de']})" if x["resultado"] or x["error_de"] else ""))
+            else:
+                quien = f"p{x['proyecto']}" if x["proyecto"] is not None else x["slug"]
+                print(f"  adoptar {x['tipo']:<14}{quien:<10}{x['archivo']} -> {x['estado']}")
+        if not a.aplicar:
+            print(f"SOLO REPORTE: {len(r['acciones'])} accion(es); usa --aplicar para escribirlas en {TRABAJOS_DB}")
+            return 0
+        def leer_error(nombre):
+            f = c["asistente"] / nombre if c["asistente"] else None
+            return f.read_text(encoding="utf-8", errors="replace") if f and f.is_file() else nombre
+        hechas, av = C.aplicar(con, r["acciones"], leer_error=leer_error)
+        for v in av:
+            print(f"AVISO: {v}")
+        print(f"OK {hechas}/{len(r['acciones'])} accion(es) en {TRABAJOS_DB}")
+        return 0 if hechas == len(r["acciones"]) else 1
+    finally:
+        if con:
+            con.close()
+
+
 def main():
     ap = argparse.ArgumentParser(prog="xd.py", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -800,6 +909,14 @@ def main():
     p.add_argument("--forzar", action="store_true", help="reemplazar una spec existente (con respaldo)")
     p.add_argument("--comparar", default="", help="slug de una spec de referencia (solo lectura)")
     p.set_defaults(f=cmd_asistente_importar)
+    p = sub.add_parser("trabajos", help="cola de trabajos del hub (SQLite); --reconciliar compara con Drive")
+    p.add_argument("--tipo", default="", choices=["", "asistente", "preetiquetado", "entrenamiento", "precodificacion"])
+    p.add_argument("--estado", default="", help="filtra por estado (incluye terminados)")
+    p.add_argument("--todos", action="store_true", help="incluye importados y archivados")
+    p.add_argument("--reconciliar", action="store_true", help="avanza estados segun los archivos de Drive y adopta huerfanos")
+    p.add_argument("--horas", type=float, default=24, help="aviso si un trabajo lleva mas de estas horas enviado")
+    p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
+    p.set_defaults(f=cmd_trabajos)
     a = ap.parse_args()
     sys.exit(a.f(a))
 

@@ -111,6 +111,83 @@ def test_listar_filtros():
         assert [x["slug"] for x in C.listar(con, estado="archivado")] == ["s"]
 
 
+def _transporte(**kw):
+    a = {"asistente": {}, "asistente_archivo": set(), "lotes": {}, "lotes_archivo": set(), "lotes_local": set(),
+         "datasets": {}, "runs": set(), "registrados": set(), "specs": {}}
+    a.update(kw)
+    return a
+
+
+def test_detectar_por_tipo():
+    a = _transporte(asistente={"asist_s_20261103-100000.zip": 1, "asist_s_20261103-100000_resultado.json": 10,
+                               "asist_e_20261103-100000.zip": 1, "asist_e_20261103-100000_error.txt": 5},
+                    specs={"s": 20},
+                    lotes={"lote_p3_a.zip": 1, "lote_p3_a_pred.json": 2, "lote_p3_b.zip": 1},
+                    lotes_local={"lote_p3_a_pred.json"}, lotes_archivo={"lote_p3_c.zip"},
+                    datasets={"dataset_p4_x.zip": 1}, runs={"dataset_p4_x_yolo", "dataset_p4_xy"},
+                    registrados={"runs/dataset_p4_x_yolo"})
+    d = C.detectar
+    assert d("asistente", "asist_s_20261103-100000.zip", a) == ("importado", "asist_s_20261103-100000_resultado.json")
+    a2 = {**a, "specs": {"s": 5}}
+    assert d("asistente", "asist_s_20261103-100000.zip", a2)[0] == "listo"           # spec mas vieja que el resultado
+    assert d("asistente", "asist_e_20261103-100000.zip", a) == ("error", "asist_e_20261103-100000_error.txt")
+    assert d("preetiquetado", "lote_p3_a.zip", a) == ("importado", "lote_p3_a_pred.json")
+    assert d("preetiquetado", "lote_p3_b.zip", a) == ("enviado", None)
+    assert d("preetiquetado", "lote_p3_c.zip", a) == ("archivado", None)
+    assert d("preetiquetado", "lote_p3_z.zip", a) == ("desaparecido", None)
+    assert d("entrenamiento", "dataset_p4_x.zip", a) == ("importado", "dataset_p4_x_yolo")   # no confunde _xy
+    assert d("entrenamiento", "dataset_p4_x.zip", {**a, "registrados": set()})[0] == "listo"
+    assert d("entrenamiento", "dataset_p4_x.zip", {**a, "runs": None}) is None
+    assert d("precodificacion", "x.zip", a) is None
+
+
+def test_reconciliar_mueve_avisa_y_no_escribe():
+    with tempfile.TemporaryDirectory() as t, closing(_base(t)) as con:
+        ok, _ = C.crear(con, "preetiquetado", "lote_p3_a.zip", proyecto=3, estado="enviado", ahora=0)
+        er, _ = C.crear(con, "asistente", "asist_e_20261103-100000.zip", slug="e", estado="enviado", ahora=0)
+        ar, _ = C.crear(con, "preetiquetado", "lote_p3_c.zip", proyecto=3, estado="enviado", ahora=0)
+        se, _ = C.crear(con, "preetiquetado", "lote_p3_d.zip", proyecto=3, estado="enviado", ahora=0)
+        vi, _ = C.crear(con, "preetiquetado", "lote_p3_v.zip", proyecto=3, estado="enviado", ahora=0)
+        a = _transporte(lotes={"lote_p3_a.zip": 1, "lote_p3_a_pred.json": 2, "lote_p3_v.zip": 1},
+                        lotes_archivo={"lote_p3_c.zip"},
+                        asistente={"asist_e_20261103-100000.zip": 1, "asist_e_20261103-100000_error.txt": 2})
+        r = C.reconciliar(C.listar(con), a, horas=24, ahora=48 * 3600)
+        movs = {x["id"]: (x["a"], x["resultado"], x["error_de"]) for x in r["acciones"]}
+        assert movs == {ok["id"]: ("listo", "lote_p3_a_pred.json", None),
+                        er["id"]: ("error", None, "asist_e_20261103-100000_error.txt"),
+                        ar["id"]: ("archivado", None, None)}, movs
+        assert any("lote_p3_d.zip" in v and "ya no esta" in v for v in r["avisos"]), r["avisos"]
+        assert any("lote_p3_v.zip" in v and "48 h" in v for v in r["avisos"]), r["avisos"]
+        assert C.obtener(con, ok["id"])["estado"] == "enviado"                       # reconciliar no escribe
+        hechas, av = C.aplicar(con, r["acciones"], leer_error=lambda n: f"Traceback de {n}")
+        assert hechas == 3 and not av
+        assert C.obtener(con, ok["id"])["estado"] == "listo"
+        assert C.obtener(con, er["id"])["error"] == "Traceback de asist_e_20261103-100000_error.txt"
+        assert C.reconciliar(C.listar(con), a, ahora=48 * 3600)["acciones"] == []    # idempotente
+
+
+def test_adoptar_huerfanos():
+    with tempfile.TemporaryDirectory() as t, closing(_base(t)) as con:
+        a = _transporte(asistente={"asist_s_20261103-100000.zip": 1, "asist_s_20261103-100000_resultado.json": 10},
+                        lotes={"lote_p3_a_pred.json": 2, "lote_p3_b.zip": 1, "otra_cosa.zip": 1},
+                        lotes_local={"lote_p3_a_pred.json"},
+                        datasets={"dataset_p4_a.zip": 1, "dataset_p4_b.zip": 2, "dataset_p5_a.zip": 1},
+                        runs={"dataset_p5_a"})
+        r = C.reconciliar([], a)
+        ad = {x["archivo"]: x["estado"] for x in r["acciones"]}
+        assert ad == {"asist_s_20261103-100000.zip": "listo", "lote_p3_a.zip": "importado", "lote_p3_b.zip": "enviado",
+                      "dataset_p4_b.zip": "enviado", "dataset_p5_a.zip": "listo"}, ad
+        assert any("dataset_p4_a.zip" in v for v in r["avisos"])                     # dataset viejo sin run
+        hechas, av = C.aplicar(con, r["acciones"])
+        assert hechas == 5 and not av
+        x = C.buscar(con, "preetiquetado", "lote_p3_a.zip")
+        assert x["estado"] == "importado" and x["proyecto"] == 3 and x["resultado"] == "lote_p3_a_pred.json"
+        assert [e["a"] for e in C.eventos(con, x["id"])] == ["enviado", "listo", "importado"]
+        assert C.buscar(con, "asistente", "asist_s_20261103-100000.zip")["slug"] == "s"
+        assert C.reconciliar(C.listar(con), a)["acciones"] == []
+        assert any("no encuentro" in v for v in C.reconciliar([], {**a, "runs": None, "datasets": None})["avisos"])
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

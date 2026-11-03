@@ -1,7 +1,7 @@
 """P.1: cola persistente de trabajos del hub (solo biblioteca estandar: sqlite3, sin red; solo lo usa el host).
 Diseno en docs/cola_trabajos.md. La base vive en el disco local del hub (nunca en Drive); Drive solo transporta.
 Uso: con = abrir(ruta); t = crear(con, "preetiquetado", "lote_p3_x.zip", proyecto=3); mover(con, t["id"], "enviado")."""
-import sqlite3, time
+import re, sqlite3, time
 from pathlib import Path
 
 ESQUEMA = 1
@@ -173,3 +173,155 @@ def fallo(con, id, detalle, ahora=None):
             raise Conflicto(f"trabajo {id}: otro proceso lo movio desde {t['estado']!r}")
         _evento(con, id, t["estado"], t["estado"], f, f"fallo: {detalle}")
     return obtener(con, id)
+
+
+# --- Reconciliacion (P.1.3): lo UNICO que mira archivos del transporte. Puro: recibe nombres, no lee disco. ---
+ASIST_ZIP = re.compile(r"^asist_(.+)_(\d{8}-\d{6})\.zip$")
+LOTE_ZIP = re.compile(r"^lote_p(\d+)_.+\.zip$")
+LOTE_PRED = re.compile(r"^(lote_p(\d+)_.+)_pred\.json$")
+DATASET_ZIP = re.compile(r"^dataset_p(\d+)_.+\.zip$")
+CARPETA = {"asistente": "asistente", "preetiquetado": "lotes", "entrenamiento": "datasets"}
+
+
+def _stem(archivo):
+    return archivo[:-4] if archivo.endswith(".zip") else archivo
+
+
+def detectar(tipo, archivo, a):
+    """Que dicen los archivos de un trabajo. a = {carpeta: {nombre: mtime} | set | None (no disponible)}.
+    -> (estado, resultado) con estado en listo|importado|error|archivado|enviado|desaparecido, o None si no se sabe."""
+    s = _stem(archivo)
+    dr = a.get(CARPETA.get(tipo, ""))
+    if dr is None:
+        return None
+    archivados = a.get(f"{CARPETA[tipo]}_archivo") or ()
+    if tipo == "asistente":
+        res, err = f"{s}_resultado.json", f"{s}_error.txt"
+        if res in dr:
+            m = ASIST_ZIP.match(archivo)
+            spec = (a.get("specs") or {}).get(m.group(1)) if m else None
+            aplicada = spec is not None and isinstance(dr, dict) and spec >= dr[res]   # regla vieja del tablero
+            return ("importado" if aplicada else "listo"), res
+        if err in dr:
+            return "error", err
+    elif tipo == "preetiquetado":
+        pred = f"{s}_pred.json"
+        if pred in dr:
+            return ("importado" if pred in (a.get("lotes_local") or ()) else "listo"), pred
+    elif tipo == "entrenamiento":
+        runs = a.get("runs")
+        if runs is None:
+            return None
+        hechos = sorted(r for r in runs if r == s or r.startswith(s + "_"))      # el cuaderno usa stem[_formato]
+        if hechos:
+            reg = a.get("registrados") or ()
+            return ("importado" if any(f"runs/{r}" in reg for r in hechos) else "listo"), hechos[-1]
+    else:
+        return None
+    if archivo in archivados:
+        return "archivado", None
+    return ("enviado" if archivo in dr else "desaparecido"), None
+
+
+def _edad_horas(fecha, ahora):
+    try:
+        return ((time.time() if ahora is None else ahora) - time.mktime(time.strptime(fecha, "%Y-%m-%dT%H:%M:%S"))) / 3600
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _candidatos(a):
+    """Trabajos que se ven en el transporte -> {(tipo, archivo): (proyecto, slug)}."""
+    out = {}
+    for n in a.get("asistente") or ():
+        m = ASIST_ZIP.match(n)
+        if m:
+            out[("asistente", n)] = (None, m.group(1))
+    for n in a.get("lotes") or ():
+        m, p = LOTE_ZIP.match(n), LOTE_PRED.match(n)
+        if m:
+            out[("preetiquetado", n)] = (int(m.group(1)), None)
+        elif p:                                                         # _pred.json sin su zip
+            out[("preetiquetado", p.group(1) + ".zip")] = (int(p.group(2)), None)
+    for n in a.get("datasets") or ():
+        m = DATASET_ZIP.match(n)
+        if m:
+            out[("entrenamiento", n)] = (int(m.group(1)), None)
+    return out
+
+
+def reconciliar(trabajos, a, horas=24, ahora=None):
+    """Compara la cola con el transporte. NO escribe. -> {"acciones": [...], "avisos": [...]}
+    accion mover:   {"op": "mover", "id", "archivo", "de", "a", "resultado", "error_de"}
+    accion adoptar: {"op": "adoptar", "tipo", "archivo", "proyecto", "slug", "estado", "resultado", "error_de"}"""
+    acciones, avisos = [], []
+    for tipo, c in CARPETA.items():
+        if a.get(c) is None:
+            avisos.append(f"{tipo}: no encuentro la carpeta '{c}' del transporte; no se reconcilia")
+    for t in trabajos:
+        if t["estado"] not in ("enviado", "en_proceso"):
+            continue
+        d = detectar(t["tipo"], t["archivo"], a)
+        if d is None:
+            continue
+        est, res = d
+        base = {"op": "mover", "id": t["id"], "archivo": t["archivo"], "de": t["estado"], "resultado": None, "error_de": None}
+        if est in ("listo", "importado"):           # importado lo marca quien importa (P.1.4), no la reconciliacion
+            acciones.append({**base, "a": "listo", "resultado": res})
+        elif est == "error":
+            acciones.append({**base, "a": "error", "error_de": res})
+        elif est == "archivado":
+            if "archivado" in TRANSICIONES[t["estado"]]:
+                acciones.append({**base, "a": "archivado"})
+            else:
+                avisos.append(f"trabajo {t['id']} ({t['archivo']}): esta en _archivo pero el worker lo tiene en proceso")
+        elif est == "desaparecido":
+            avisos.append(f"trabajo {t['id']} ({t['archivo']}): el zip ya no esta en el transporte y no hay resultado")
+        elif _edad_horas(t["actualizado"], ahora) > horas:
+            avisos.append(f"trabajo {t['id']} ({t['archivo']}): lleva {_edad_horas(t['actualizado'], ahora):.0f} h "
+                          f"en {t['estado']} (mas de {horas} h)")
+    conocidos = {(t["tipo"], t["archivo"]) for t in trabajos}
+    ultimo_ds = {}
+    for (tipo, archivo), (n, _) in _candidatos(a).items():
+        if tipo == "entrenamiento":
+            ultimo_ds[n] = max(ultimo_ds.get(n, ""), archivo)
+    for (tipo, archivo), (n, slug) in sorted(_candidatos(a).items()):
+        if (tipo, archivo) in conocidos:
+            continue
+        est, res = detectar(tipo, archivo, a) or (None, None)
+        if est in (None, "archivado", "desaparecido"):
+            continue
+        if tipo == "entrenamiento" and est == "enviado" and archivo != ultimo_ds[n]:
+            avisos.append(f"{archivo}: dataset viejo sin run; no se adopta (el cuaderno entrena el ultimo)")
+            continue
+        acciones.append({"op": "adoptar", "tipo": tipo, "archivo": archivo, "proyecto": n, "slug": slug,
+                         "estado": est, "resultado": res if est != "error" else None,
+                         "error_de": res if est == "error" else None})
+    return {"acciones": acciones, "avisos": avisos}
+
+
+CAMINO = {"enviado": (), "listo": ("listo",), "importado": ("listo", "importado"), "error": ("error",)}
+
+
+def aplicar(con, acciones, leer_error=lambda nombre: nombre, ahora=None):
+    """Ejecuta las acciones de reconciliar(). leer_error(nombre) -> texto del _error.txt.
+    Las adopciones entran como enviado y recorren la maquina de estados (queda en eventos). -> (hechas, avisos)"""
+    hechas, avisos = 0, []
+    for x in acciones:
+        try:
+            err = leer_error(x["error_de"]) if x.get("error_de") else None
+            if x["op"] == "mover":
+                mover(con, x["id"], x["a"], desde=x["de"], resultado=x["resultado"], detalle=err, ahora=ahora)
+            else:
+                t, nuevo = crear(con, x["tipo"], x["archivo"], proyecto=x["proyecto"], slug=x["slug"], estado="enviado",
+                                 detalle="adoptado por reconciliacion", ahora=ahora)
+                if not nuevo:
+                    avisos.append(f"{x['archivo']}: ya estaba registrado; se omite")
+                    continue
+                for paso in CAMINO[x["estado"]]:
+                    mover(con, t["id"], paso, resultado=x["resultado"] if paso == "listo" else None,
+                          detalle=err if paso == "error" else "adoptado por reconciliacion", ahora=ahora)
+            hechas += 1
+        except (Conflicto, ValueError, KeyError) as e:
+            avisos.append(f"{x['archivo']}: {e}")
+    return hechas, avisos
