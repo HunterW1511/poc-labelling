@@ -1,6 +1,6 @@
 # Manual de uso de PoC-Labelling
 
-Guia paso a paso para el equipo. Que es el sistema y como instalarlo: README.md. Contexto y decisiones: docs/contexto.md.
+Guia paso a paso para el equipo. Que es el sistema y como instalarlo: README.md.
 Cada accion de la UI es un comando de `xd.py` (se indica entre parentesis); lo que escribe primero muestra un reporte
 y solo escribe cuando lo confirmas.
 

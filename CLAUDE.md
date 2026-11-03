@@ -1,6 +1,6 @@
 # Reglas para agentes (Claude Code, Kiro y otros)
 
-Lee primero: `README.md` (que es y como se usa), `docs/contexto.md` (decisiones, estado y ruta) y, para specs,
+Lee primero: `README.md` (que es y como se usa), el contexto del piloto (vive fuera del repo; el usuario indica la ruta) y, para specs,
 `motor/plantillas/LEEME_spec.md`. Usuario: IoT Lab (XalDigital). Idioma del codigo y la UI: espanol sin acentos (ASCII).
 
 ## Mapa del codigo

@@ -4,7 +4,6 @@ Pre-etiquetado general y multiproyecto para vision artificial, sin licencias Saa
 un caso hasta un modelo "hijo" (YOLO) validado en vivo. Corre en una laptop sin GPU mas GPU gratuita en Colab.
 Cada paso es un comando de `xd.py`; la UI (`ui.py`) solo los muestra y los lanza.
 
-Contexto completo, decisiones y ruta al piloto: [docs/contexto.md](docs/contexto.md).
 Reglas para agentes (Claude Code, Kiro): [CLAUDE.md](CLAUDE.md).
 Manual de uso paso a paso: [docs/manual.md](docs/manual.md).
 
@@ -18,7 +17,7 @@ Manual de uso paso a paso: [docs/manual.md](docs/manual.md).
 | `capturar.py`, `ver_cajas.py` | Host | Webcam: captura de fotos y modelo en vivo (OpenVINO o PyTorch) |
 | Cuadernos (`notebooks/`) | Colab T4 | Asistente (Whisper + qwen2.5:14b), pre-etiquetado de lotes (SAM 3) y entrenamiento (YOLO). Intercambio por Drive para escritorio |
 
-Direccion del piloto (docs/contexto.md, fases P.x): el trabajo pesado se va a un worker en Kaggle; el hub queda con
+Direccion del piloto: el trabajo pesado se va a un worker en Kaggle; el hub queda con
 Label Studio, la UI y el clic interactivo usando la cache de SAM 3 que precodifica el worker.
 
 ## Instalacion
