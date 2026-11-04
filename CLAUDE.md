@@ -21,7 +21,9 @@ Lee primero: `README.md` (que es y como se usa), el contexto del piloto (vive fu
 ## Reglas de oro
 1. **Nucleo intocable sin decidir la migracion:** `motor/reglas.py`, `motor/pipeline.py` y `leer_perfil`
    (en `perfil.py`) entran en el hash de version `sam3-<perfil>-<nucleo>`; cambiarlos deja huerfanas las predicciones.
-2. **Nunca dos modelos pesados a la vez** en un mismo proceso o equipo (SAM 3 dos veces, Whisper + LLM): OOM.
+2. **Un modelo pesado a la vez por GPU** (y nunca dos en el hub ni en un equipo sin GPU): SAM 3 dos veces o
+   Whisper + LLM en la misma GPU es OOM. En el worker con varias GPU (Kaggle T4 x2) se permite uno por GPU, para
+   aprovechar todo el computo (decidido el 03/11/2026; se mide antes de dejarlo por defecto).
 3. **Todo lo que escribe tiene modo reporte;** `--aplicar` escribe. Nada destructivo sin reporte previo.
 4. **General y multiproyecto:** nada fijo por caso en el codigo; lo especifico va en la spec del proyecto.
 5. **Backend primero:** cada paso es un comando de `xd.py` probado por CLI; la UI no reimplementa logica.
