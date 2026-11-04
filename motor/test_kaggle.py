@@ -146,6 +146,9 @@ def test_envio_kernel_y_estado():
                                                                   "lote_p3_x.zip.xd"]                # Kaggle descomprime los .zip
         assert e["trabajos"][0]["archivo"] == "lote_p3_x.zip" and e["trabajos"][0]["en_envio"] == "lote_p3_x.zip.xd"
         _falla(ValueError, K.armar_envio, [], t / "env2", "emi", "e", "emi")
+        (t / "pre_p3_y.zip").write_bytes(b"z3")                                       # P.3.3: viaja en lotes
+        e2 = K.armar_envio([("lotes", t / "pre_p3_y.zip")], t / "env3", "emi", "envio_2", "emi")
+        assert e2["trabajos"][0]["tipo"] == "precodificacion" and K.tipo_de("otra.zip") is None
         m = K.kernel_metadata("emi")
         assert m["is_private"] is True and m["enable_gpu"] is True and m["title"] == "xd-worker"
         assert m["id"] == "emi/xd-worker" and m["dataset_sources"] == ["emi/xd-pesos", "emi/xd-envios"]

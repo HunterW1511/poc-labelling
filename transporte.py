@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 CARPETAS = ("asistente", "lotes", "datasets", "runs")
-PREFIJO = (("asist_", "asistente"), ("lote_p", "lotes"), ("dataset_p", "datasets"))
+PREFIJO = (("asist_", "asistente"), ("lote_p", "lotes"), ("dataset_p", "datasets"), ("pre_p", "lotes"))
 
 
 def carpeta_de(nombre):

@@ -7,7 +7,8 @@ from pathlib import Path
 
 ESQUEMA = 1
 TIPOS = ("asistente", "preetiquetado", "entrenamiento", "precodificacion")
-PREFIJOS = (("asist_", "asistente"), ("lote_p", "preetiquetado"), ("dataset_p", "entrenamiento"))
+PREFIJOS = (("asist_", "asistente"), ("lote_p", "preetiquetado"), ("dataset_p", "entrenamiento"),
+            ("pre_p", "precodificacion"))
 # un solo modelo pesado a la vez: el lanzador procesa por grupos en este orden y libera memoria entre grupos
 ORDEN = ("preetiquetado-sam3", "preetiquetado-hijo", "precodificacion", "entrenamiento", "asistente")
 
@@ -136,7 +137,53 @@ def _entrenamiento(d, salida, stem, t, cache, op):
 
 
 def _precodificacion(d, salida, stem, t, cache, op):
-    raise NotImplementedError("la precodificacion de SAM 3 llega en P.3")
+    """P.3.3: codifica las fotos con el image encoder de SAM 3 y guarda las features (f16) en salida/cache/.
+    El hub las usa en el clic (docs/cache_sam3.md). Comprueba que pesos y version sean los del hub: si no, las claves
+    no servirian."""
+    import cache_sam3 as CS
+    from importlib.metadata import version
+    par = t.get("parametros") or {}
+    imgsz = int(par["imgsz"])
+    ver = op.get("version_ul") or version("ultralytics")
+    if par.get("ultralytics") and par["ultralytics"] != ver:
+        raise RuntimeError(f"el hub usa ultralytics {par['ultralytics']} y el worker {ver}: la cache no serviria")
+    sam3_pt = op.get("sam3_pt") or "/content/sam3.pt"
+    sha_m = op.get("sha_modelo") or CS.sha256_archivo(sam3_pt)
+    if par.get("sha_modelo") and par["sha_modelo"][:12] != sha_m[:12]:
+        raise RuntimeError(f"sam3.pt del worker ({sha_m[:12]}) distinto del hub ({par['sha_modelo'][:12]})")
+    Pred = op.get("SAM3Predictor")
+    if Pred is None:
+        from ultralytics.models.sam import SAM3Predictor as Pred
+    k = ("pre", imgsz)
+    if k not in (cache if cache is not None else {}):
+        if cache is not None:
+            liberar(cache)
+        ov = {"model": str(sam3_pt), "imgsz": imgsz, "conf": 0.01, "task": "segment", "mode": "predict",
+              "verbose": False, "save": False, "device": op.get("device", 0)}   # = cola.overrides_sam3 del motor
+        p = Pred(overrides=ov)
+        if cache is not None:
+            cache[k] = p
+    else:
+        p = cache[k]
+    fotos = json.loads((Path(d) / "fotos.json").read_text(encoding="utf-8"))["fotos"]
+    dest, hechas, t0 = Path(salida) / "cache", [], time.time()
+    for i, f in enumerate(fotos, 1):
+        ruta = Path(d) / f["foto"]
+        sha = CS.sha256_archivo(ruta)
+        if f.get("sha") and f["sha"] != sha:
+            raise RuntimeError(f"{f['foto']}: sha256 distinto del que mando el hub (zip danado)")
+        c = CS.clave(sha, imgsz, sha_m, ver)
+        ti = time.time()
+        p.set_image(str(ruta))
+        CS.guardar(CS.archivo(dest, c), CS.empaquetar(p.features, c, imgsz))
+        p.reset_image()
+        hechas.append({"tarea": f.get("tarea"), "clave": c, "seg": round(time.time() - ti, 2)})
+        print(f"[{i}/{len(fotos)}] tarea {f.get('tarea')} | {hechas[-1]['seg']}s", flush=True)
+    nombre = f"{stem}_cache.json"
+    escribir(Path(salida) / nombre, json.dumps({"esquema": 1, "trabajo": stem, "imgsz": imgsz, "sha_modelo": sha_m,
+                                                "ultralytics": ver, "seg": round(time.time() - t0, 1),
+                                                "fotos": hechas}, ensure_ascii=True, indent=1))
+    return nombre
 
 
 EJECUTORES = {"asistente": _asistente, "preetiquetado": _preetiquetado, "entrenamiento": _entrenamiento,

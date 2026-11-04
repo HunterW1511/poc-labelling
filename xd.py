@@ -220,6 +220,30 @@ def cmd_lote_importar(a):
 ENTRENAMIENTO = ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo", "device")   # P.2.3: viajan en trabajo.json
 
 
+def cmd_precodificar(a):
+    """P.3.3: fotos del proyecto sin cache de SAM 3 -> trabajo de precodificacion para el worker (GPU)."""
+    T = _transporte()
+    T.requerir("lotes")
+    args = [a.proyecto] + (["--todas"] if a.todas else []) + (["--limite", a.limite] if a.limite else [])
+    if not a.aplicar:
+        rc = en_motor("exportar_pre.py", *args, "--reporte")[0]
+        if rc == 0:
+            print("Modo reporte. Para generar el trabajo y enviarlo al worker agrega --aplicar")
+        return rc
+    rc, out = en_motor("exportar_pre.py", *args)
+    if rc:
+        return rc
+    m = re.search(r"-> (\S+\.zip)", out)
+    if not m:
+        raise SystemExit("No encontre la ruta del zip en la salida de exportar_pre.py")
+    zp = LOTES_LOCAL / PurePosixPath(m.group(1)).name
+    _en_cola(zp.name, _q_crear, "precodificacion", zp.name, "pendiente", proyecto=a.proyecto)
+    print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
+    _en_cola(zp.name, _q_enviado, "precodificacion", zp.name)
+    print(_siguiente_externo(T, "python xd.py cache-importar --aplicar"))
+    return 0
+
+
 def cmd_dataset(a):
     extra = [x for k in ENTRENAMIENTO for x in ((f"--{k.replace('_', '-')}", getattr(a, k, "")) if getattr(a, k, "") else ())]
     rc, out = en_motor("exportar_yolo.py", a.proyecto, "--formato", a.formato, "--val", a.val, *(["--correcciones", a.correcciones] if a.correcciones else []), *extra)
@@ -1168,6 +1192,12 @@ def main():
     p.add_argument("--fijar-version", action="store_true", help="model_version del proyecto = la del lote")
     p.set_defaults(f=cmd_lote_importar)
 
+    p = sub.add_parser("precodificar", help="P.3: fotos del proyecto sin cache de SAM 3 -> trabajo para el worker")
+    p.add_argument("proyecto", type=int)
+    p.add_argument("--todas", action="store_true", help="rehacer tambien las fotos que ya tienen cache")
+    p.add_argument("--limite", type=int, default=0, help="maximo de fotos")
+    p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
+    p.set_defaults(f=cmd_precodificar)
     p = sub.add_parser("dataset", help="exporta las anotaciones validadas a un dataset YOLO (zip)")
     p.add_argument("proyecto", type=int)
     p.add_argument("--formato", choices=["det", "seg", "ambos"], default="det")

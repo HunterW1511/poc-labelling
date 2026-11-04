@@ -138,7 +138,11 @@ def test_detectar_por_tipo():
     assert d("entrenamiento", "dataset_p4_x.zip", a) == ("importado", "dataset_p4_x_yolo")   # no confunde _xy
     assert d("entrenamiento", "dataset_p4_x.zip", {**a, "registrados": set()})[0] == "listo"
     assert d("entrenamiento", "dataset_p4_x.zip", {**a, "runs": None}) is None
-    assert d("precodificacion", "x.zip", a) is None
+    a4 = {**a, "lotes": {"pre_p3_c.zip": 1, "pre_p3_c_cache.json": 2, "pre_p3_e.zip": 1, "pre_p3_e_error.txt": 2}}
+    assert d("precodificacion", "pre_p3_c.zip", a4) == ("listo", "pre_p3_c_cache.json")       # P.3.3
+    assert d("precodificacion", "pre_p3_e.zip", a4) == ("error", "pre_p3_e_error.txt")
+    assert d("precodificacion", "pre_p3_z.zip", a4) == ("desaparecido", None)
+    assert ("precodificacion", "pre_p3_c.zip") in C._candidatos(a4) and ("preetiquetado", "pre_p3_c.zip") not in C._candidatos(a4)
     # P.2.4: el worker deja _error.txt tambien en lotes y datasets
     a3 = {**a, "lotes": {"lote_p3_e.zip": 1, "lote_p3_e_error.txt": 2}, "datasets": {"dataset_p9_e.zip": 1, "dataset_p9_e_error.txt": 2}}
     assert d("preetiquetado", "lote_p3_e.zip", a3) == ("error", "lote_p3_e_error.txt")

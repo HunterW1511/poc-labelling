@@ -15,6 +15,7 @@ ASISTENTE = ("pip -q install faster-whisper==1.2.1 ctranslate2==4.8.4 nvidia-cub
              "'nvidia-cudnn-cu12==9.*' nvidia-cuda-runtime-cu12")
 OLLAMA = "apt-get -qq install -y zstd lshw > /dev/null && curl -fsSL https://ollama.com/install.sh | sh"
 NECESITA_SAM3 = ("preetiquetado", "precodificacion")
+VERIFICADO = {}                                  # ruta de sam3.pt -> sha256 ya comprobado
 
 
 def log(*a):
@@ -35,7 +36,8 @@ def sha256(ruta, bloque=8 << 20):
 
 
 def verificar_pesos(pesos_json):
-    """-> ruta de sam3.pt si su sha256 coincide con pesos.json; si no, error (nunca usar pesos corruptos)."""
+    """-> ruta de sam3.pt si su sha256 coincide con pesos.json; si no, error (nunca usar pesos corruptos).
+    El sha queda en VERIFICADO (la precodificacion lo pone en la clave de la cache)."""
     info = json.loads(Path(pesos_json).read_text(encoding="utf-8"))
     pt = Path(pesos_json).parent / info["archivo"]
     t = time.time()
@@ -43,6 +45,7 @@ def verificar_pesos(pesos_json):
     if real != info["sha256"]:
         raise RuntimeError(f"{pt.name}: sha256 {real[:12]} distinto del esperado {info['sha256'][:12]}")
     log(f"pesos OK: {pt} ({info['bytes'] / 1e9:.2f} GB, sha256 en {time.time() - t:.0f} s)")
+    VERIFICADO[str(pt)] = real
     return pt
 
 
@@ -108,6 +111,8 @@ def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None,
             op = {"runs": salida / "runs", "device": device}
             if sam3_pt:
                 op["sam3_pt"] = str(sam3_pt)
+                if str(sam3_pt) in VERIFICADO:
+                    op["sha_modelo"] = VERIFICADO[str(sam3_pt)]
             estados.append(worker.procesar(d, listos[stem][1], cache, stem=stem, ent=worker.entorno(proveedor), **op))
             previo = g
     res = {"esquema": 1, "envio": envio.get("envio"), "fin": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "estados": estados}

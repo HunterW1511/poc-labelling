@@ -1,5 +1,5 @@
 """P.2.3: worker.py y entrenar.py con modelos FALSOS (sin GPU, sin ultralytics real, sin red). Uso: python test_worker.py"""
-import json, tempfile, zipfile
+import json, shutil, tempfile, zipfile
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -99,7 +99,7 @@ def test_precodificacion_y_tipo_roto_dejan_estado():
         d.mkdir()
         (d / "trabajo.json").write_text(json.dumps(worker.encabezado("precodificacion", "pre_x")), encoding="utf-8")
         e = worker.procesar(d, t / "out", ent=ENT)
-        assert not e["ok"] and "P.3" in e["error"] and (t / "out" / "pre_x.estado.json").exists()
+        assert not e["ok"] and "imgsz" in e["error"] and (t / "out" / "pre_x.estado.json").exists()   # sin parametros
         r = t / "raro"
         r.mkdir()
         e = worker.procesar(r, t / "out", ent=ENT)
@@ -197,6 +197,65 @@ def test_entrenamiento_por_el_worker():
         assert met["por_clase"]["base"]["error_abs"] == 1 and met["por_clase"]["tornillo"]["ap50"] == 0.9
         assert met["epocas_ejecutadas"] == 2 and met["dataset"] == f"{stem}.zip"
         assert registro.normalizar(met)["conteo_tasa"] == 0.5          # registrar lo acepta como siempre
+
+
+class SAM3Falso:
+    """Imita SAM3Predictor: set_image deja features con las formas reales de SAM 3 (imgsz 644 -> 46x46)."""
+    creados = 0
+
+    def __init__(self, overrides):
+        SAM3Falso.creados += 1
+        self.ov, self.features = overrides, None
+
+    def set_image(self, ruta):
+        import torch
+        g = torch.Generator().manual_seed(len(Path(ruta).read_bytes()))
+        self.features = {"image_embed": torch.randn(1, 256, 46, 46, generator=g),
+                         "high_res_feats": [torch.randn(1, 32, 184, 184, generator=g), torch.randn(1, 64, 92, 92, generator=g)]}
+
+    def reset_image(self):
+        self.features = None
+
+
+def test_precodificacion_genera_cache_valida():
+    import cache_sam3 as CS
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        d = t / "pre_p3_20261103-100000"
+        (d / "fotos").mkdir(parents=True)
+        fotos = []
+        for i, contenido in enumerate((b"foto uno", b"foto dos mas larga"), 1):
+            (d / "fotos" / f"{i}.jpg").write_bytes(contenido)
+            fotos.append({"tarea": 100 + i, "foto": f"fotos/{i}.jpg", "sha": CS.sha256_archivo(d / "fotos" / f"{i}.jpg")})
+        (d / "fotos.json").write_text(json.dumps({"esquema": 1, "fotos": fotos}))
+        sha_m = "ab" * 32
+        par = {"imgsz": 644, "sha_modelo": sha_m, "ultralytics": "8.4.174"}
+        (d / "trabajo.json").write_text(json.dumps(worker.encabezado("precodificacion", d.name, proyecto=3, parametros=par)))
+        cache = {}
+        op = {"SAM3Predictor": SAM3Falso, "version_ul": "8.4.174", "sha_modelo": sha_m, "sam3_pt": "sam3.pt", "device": 0}
+        e = worker.procesar(d, t / "out", cache, ent=ENT, **op)
+        assert e["ok"] and e["resultado"] == f"{d.name}_cache.json", e
+        idx = json.loads((t / "out" / e["resultado"]).read_text())
+        assert [f["tarea"] for f in idx["fotos"]] == [101, 102] and idx["imgsz"] == 644
+        c = idx["fotos"][0]["clave"]
+        assert c == CS.clave(fotos[0]["sha"], 644, sha_m, "8.4.174") and CS.CLAVE.match(c)
+        f = CS.cargar(CS.archivo(t / "out" / "cache", c), c,
+                      formas_esperadas=[(1, 256, 46, 46), (1, 32, 184, 184), (1, 64, 92, 92)])
+        assert str(f["image_embed"].dtype) == "torch.float32"                         # f16 en disco, f32 al cargar
+        import torch
+        assert torch.load(CS.archivo(t / "out" / "cache", c), weights_only=True)["dtype"] == "float16"
+        _falla(ValueError, CS.cargar, CS.archivo(t / "out" / "cache", c), "otra" + c[4:])
+        _falla(ValueError, CS.cargar, CS.archivo(t / "out" / "cache", c), c, formas_esperadas=[(1, 256, 72, 72)])
+        assert SAM3Falso.creados == 1 and ("pre", 644) in cache                       # un SAM 3, reutilizable
+        # el hub y el worker deben coincidir en version y pesos; si no, la cache no serviria
+        for malo in ({"version_ul": "8.5.0"}, {"sha_modelo": "cd" * 32}):
+            d2 = t / f"pre_p3_x{len(malo)}{list(malo)[0]}"
+            shutil.copytree(d, d2)
+            e2 = worker.procesar(d2, t / "out2", {}, ent=ENT, **{**op, **malo})
+            assert not e2["ok"] and ("ultralytics" in e2["error"] or "sam3.pt" in e2["error"]), e2
+        (d / "fotos" / "1.jpg").write_bytes(b"cambiada")                              # zip danado
+        e3 = worker.procesar(d, t / "out3", {}, ent=ENT, **op)
+        assert not e3["ok"] and "sha256" in e3["error"]
 
 
 if __name__ == "__main__":

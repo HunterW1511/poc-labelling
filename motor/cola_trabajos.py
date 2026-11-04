@@ -257,7 +257,8 @@ ASIST_ZIP = re.compile(r"^asist_(.+)_(\d{8}-\d{6})\.zip$")
 LOTE_ZIP = re.compile(r"^lote_p(\d+)_.+\.zip$")
 LOTE_PRED = re.compile(r"^(lote_p(\d+)_.+)_pred\.json$")
 DATASET_ZIP = re.compile(r"^dataset_p(\d+)_.+\.zip$")
-CARPETA = {"asistente": "asistente", "preetiquetado": "lotes", "entrenamiento": "datasets"}
+CARPETA = {"asistente": "asistente", "preetiquetado": "lotes", "entrenamiento": "datasets", "precodificacion": "lotes"}
+PRE_ZIP = re.compile(r"^pre_p(\d+)_.+\.zip$")
 
 
 def _stem(archivo):
@@ -286,6 +287,12 @@ def detectar(tipo, archivo, a):
         if pred in dr:
             return ("importado" if pred in (a.get("lotes_local") or ()) else "listo"), pred
         if f"{s}_error.txt" in dr:                                      # P.2.4: el worker deja error para todos
+            return "error", f"{s}_error.txt"
+    elif tipo == "precodificacion":                                  # P.3.3: importado lo marca cache-importar
+        res = f"{s}_cache.json"
+        if res in dr:
+            return "listo", res
+        if f"{s}_error.txt" in dr:
             return "error", f"{s}_error.txt"
     elif tipo == "entrenamiento":
         runs = a.get("runs")
@@ -319,8 +326,10 @@ def _candidatos(a):
         if m:
             out[("asistente", n)] = (None, m.group(1))
     for n in a.get("lotes") or ():
-        m, p = LOTE_ZIP.match(n), LOTE_PRED.match(n)
-        if m:
+        m, p, q = LOTE_ZIP.match(n), LOTE_PRED.match(n), PRE_ZIP.match(n)
+        if q:
+            out[("precodificacion", n)] = (int(q.group(1)), None)
+        elif m:
             out[("preetiquetado", n)] = (int(m.group(1)), None)
         elif p:                                                         # _pred.json sin su zip
             out[("preetiquetado", p.group(1) + ".zip")] = (int(p.group(2)), None)
@@ -337,6 +346,8 @@ def reconciliar(trabajos, a, horas=24, ahora=None):
     accion adoptar: {"op": "adoptar", "tipo", "archivo", "proyecto", "slug", "estado", "resultado", "error_de"}"""
     acciones, avisos = [], []
     for tipo, c in CARPETA.items():
+        if tipo == "precodificacion":
+            continue                                                   # comparte carpeta con preetiquetado
         if a.get(c) is None:
             avisos.append(f"{tipo}: no encuentro la carpeta '{c}' del transporte; no se reconcilia")
     for t in trabajos:

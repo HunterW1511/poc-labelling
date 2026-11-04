@@ -26,6 +26,7 @@ HEADERS = {"Authorization": f"Token {LS_API_KEY}"}
 SAM3_MODEL = os.environ.get("SAM3_MODEL") or "/data/sam3.pt"
 DATOS = Path(os.environ.get("MOTOR_DATOS") or APP)
 LOTES, DATASETS, MODELOS = DATOS / "lotes", DATOS / "datasets", DATOS / "modelos"
+CACHE_SAM3 = DATOS / "cache_sam3"                # P.3: features de SAM 3 precodificadas por el worker
 
 # Computo: auto | cpu | 0 | cuda:0 ... (formato de select_device de Ultralytics)
 DEVICE = (os.environ.get("MOTOR_DEVICE") or "auto").strip().lower()

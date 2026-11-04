@@ -11,6 +11,7 @@ motor/lotes/
 motor/datasets/
 motor/modelos/
 motor/diagnosticos/
+motor/cache_sam3/
 datos/
 
 # --- Modelos, pesos y exportaciones ---

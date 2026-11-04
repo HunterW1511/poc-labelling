@@ -131,6 +131,12 @@ SLUG_ENVIOS, TITULO_ENVIOS = "xd-envios", "xd-envios trabajos"
 SLUG_KERNEL = "xd-worker"                       # el titulo debe "slugificar" al slug: se usa el mismo
 ACTIVOS = ("queued", "running", "new_script", "cancel_requested")
 TIPO_DE_CARPETA = {"asistente": "asistente", "lotes": "preetiquetado", "datasets": "entrenamiento"}
+TIPO_POR_PREFIJO = (("asist_", "asistente"), ("lote_p", "preetiquetado"), ("dataset_p", "entrenamiento"),
+                    ("pre_p", "precodificacion"))
+
+
+def tipo_de(nombre):
+    return next((t for p, t in TIPO_POR_PREFIJO if nombre.startswith(p)), None)
 EXT_ENVIO = ".xd"     # Kaggle DESCOMPRIME los .zip de un dataset (visto en P.2.7a): viajan como <zip>.xd
 CARPETAS_SALIDA = ("asistente", "lotes", "datasets", "runs")
 
@@ -152,10 +158,11 @@ def armar_envio(zips, destino, usuario_, nombre, operador):
     trabajos = []
     for carpeta, zp in zips:
         zp = Path(zp)
-        if carpeta not in TIPO_DE_CARPETA:
-            raise ValueError(f"carpeta {carpeta!r} sin tipo de trabajo")
+        tipo = tipo_de(zp.name)
+        if carpeta not in TIPO_DE_CARPETA or tipo is None:
+            raise ValueError(f"{zp.name} ({carpeta}): no es un trabajo conocido")
         _enlazar(zp, destino / (zp.name + EXT_ENVIO))
-        trabajos.append({"tipo": TIPO_DE_CARPETA[carpeta], "archivo": zp.name, "en_envio": zp.name + EXT_ENVIO,
+        trabajos.append({"tipo": tipo, "archivo": zp.name, "en_envio": zp.name + EXT_ENVIO,
                          "bytes": zp.stat().st_size})
     if not trabajos:
         raise ValueError("envio vacio")
