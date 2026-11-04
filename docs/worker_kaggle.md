@@ -112,7 +112,23 @@ de una persona a traves del hub, es al menos una zona gris y arriesga la cuenta.
 | `dataset_sources` | La CLI 2.2.5 lo traduce a `dataset_data_sources` (el issue 633 no aplica) |
 
 El kernel verifica el sha256 de `sam3.pt` contra `pesos.json` antes de usarlo (solo si hay trabajos que usan SAM 3).
-Siguiente medicion: un lote de pre-etiquetado (instalar vision + verificar pesos + SAM 3), en P.2.8.
+
+### Medido en P.2.8 (03/11/2026, Kaggle T4; hub = laptop)
+| Que | Valor |
+| --- | --- |
+| Asistente desde la **UI** (Enviar trabajo -> Enviar a Kaggle -> Traer) | ~7 min de punta a punta sin abrir Kaggle; subida 9.7 s, dataset +2.9 s, el trabajo empezo ~2.8 min despues del envio (GPU + Whisper + Ollama), trabajo 198.5 s (LLM 131 s) |
+| Pre-etiquetado SAM 3, lote de 10 (imagenes sinteticas 1280x720) | subida 10 s (3.4 MB), dataset +2 s; kernel 82 s: sha256 de `sam3.pt` 22 s, pip vision 20 s, carga de SAM 3 + 1a foto 30 s, **1.1 s por foto** despues |
+| Imagen | `ultralytics 8.4.174` instalado sobre Python 3.13.16 / torch 2.11.0+cu130 / CUDA 13.0 |
+
+Lectura: con un lote de 100 fotos el kernel tardaria ~3 min (arranque ~70 s + 1.1 s por foto); el costo fijo por
+envio (~1-3 min) pide **agrupar** trabajos en un mismo envio (ya lo hace `worker --enviar`).
+
+### Dos GPU (T4 x2)
+- Entrenamiento YOLO: usa las dos (DDP, `device` auto -> `0,1`) desde P.2.8; medir en el primer entrenamiento real.
+- Ollama reparte solo entre las GPU.
+- SAM 3 (pre-etiquetado y precodificacion) procesa foto a foto: aprovechar la segunda T4 exige **dos SAM 3** (uno por
+  GPU, el lote partido en dos), y eso choca con la regla de oro 2. **Pregunta abierta** para el responsable: con
+  2 x 15 GB de VRAM y ~29 GB de RAM en Kaggle, permitir "un SAM 3 por GPU" solo en el worker, medido antes.
 Visto una vez durante la subida: un `datos/kaggle/sam3.pt` transitorio (sin enlace con el original; desaparecio solo).
 
 ## 5. Fuentes (consultadas el 03/11/2026)
