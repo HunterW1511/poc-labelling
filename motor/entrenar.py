@@ -2,12 +2,13 @@
 VIAJA en codigo/ del dataset_p<N>_*.zip; lo llama worker.py. Escribe runs/<RUN>/weights/{best.pt, metricas.json}
 con el mismo formato de siempre (lo leen registrar, registro.py y la reconciliacion).
 YOLO es inyectable para pruebas; ultralytics solo se importa al entrenar de verdad."""
-import csv, datetime, json, sys
+import csv, datetime, json, re, sys
 from collections import Counter
 from pathlib import Path
 
 DEFECTOS = {"formato": "det", "modelo": "", "imgsz": 960, "epochs": 100, "patience": 30, "batch": 16,
-            "conf_conteo": 0.25}
+            "conf_conteo": 0.25, "device": ""}           # device "": auto (todas las GPU: Kaggle T4 x2 -> "0,1")
+DEVICE = re.compile(r"^(cpu|\d+(,\d+)*)$")
 MODELO_BASE = {"det": "yolo11n.pt", "seg": "yolo11n-seg.pt"}
 ENTEROS = ("imgsz", "epochs", "patience", "batch")
 
@@ -28,7 +29,26 @@ def parametros(p=None):
     if not 0 < out["conf_conteo"] < 1:
         raise ValueError("conf_conteo debe estar entre 0 y 1")
     out["modelo"] = out["modelo"] or MODELO_BASE[out["formato"]]
+    out["device"] = str(out["device"]).replace(" ", "")
+    if out["device"] and not DEVICE.match(out["device"]):
+        raise ValueError(f"device {out['device']!r}: '' (auto), 'cpu', '0' o '0,1'")
     return out
+
+
+def dispositivo(device="", gpus=None):
+    """'' -> todas las GPU (P.2.8: la cuota de Kaggle cuenta horas de sesion; T4 x2 entrena en DDP) o 'cpu'.
+    -> (para entrenar, para validar y predecir: siempre una sola GPU)."""
+    if device:
+        return device, device.split(",")[0]
+    if gpus is None:
+        try:
+            import torch
+            gpus = torch.cuda.device_count()
+        except Exception:
+            gpus = 0
+    if gpus <= 0:
+        return "cpu", "cpu"
+    return ",".join(str(i) for i in range(gpus)), "0"
 
 
 def nombre_run(stem, formato):
@@ -84,13 +104,15 @@ def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None, runs=
     run_n = nombre_run(stem, fmt)
     print(f"Dataset {dataset or stem} | run {run_n} | modelo {p['modelo']} | imagenes {resumen.get('imagenes')} | "
           f"correcciones {resumen.get('n_correcciones')}", flush=True)
+    dev, dev1 = dispositivo(p["device"])
+    print(f"device: entrenar {dev} | validar {dev1}", flush=True)
     YOLO(p["modelo"]).train(data=str(yml), epochs=p["epochs"], imgsz=p["imgsz"], batch=p["batch"],
                             patience=p["patience"], plots=True, project=str(runs), name=run_n,
-                            exist_ok=True)
+                            exist_ok=True, device=dev)
     run = runs / run_n
     best = YOLO(str(run / "weights" / "best.pt"))
     names = best.names
-    m = best.val(data=str(yml), imgsz=p["imgsz"], plots=False)
+    m = best.val(data=str(yml), imgsz=p["imgsz"], plots=False, device=dev1)
     por_clase = {names[i]: {} for i in names}
     for k, c in enumerate(m.box.ap_class_index):
         por_clase[names[int(c)]].update(ap50=round(float(m.box.ap50[k]), 4), ap50_95=round(float(m.box.ap[k]), 4))
@@ -99,7 +121,7 @@ def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None, runs=
     pares = []
     for im in imgs:
         real = _etiquetas(d / fmt / "labels" / "val" / f"{im.stem}.txt")
-        pred = Counter(best.predict(str(im), imgsz=p["imgsz"], conf=p["conf_conteo"], verbose=False)[0]
+        pred = Counter(best.predict(str(im), imgsz=p["imgsz"], conf=p["conf_conteo"], verbose=False, device=dev1)[0]
                        .boxes.cls.int().tolist())
         pares.append((real, pred))
     exactas, err, real_tot = kpi_conteo(pares)
@@ -113,7 +135,7 @@ def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None, runs=
            "proyecto": proyecto, "dataset": dataset or f"{stem}.zip", "resumen_dataset": resumen, "formato": fmt,
            "modelo_base": p["modelo"], "ultralytics": ul,
            "params": {"imgsz": p["imgsz"], "epochs": p["epochs"], "patience": p["patience"], "batch": p["batch"],
-                      "conf_conteo": p["conf_conteo"]},
+                      "conf_conteo": p["conf_conteo"], "device": dev},
            "epocas_ejecutadas": epocas,
            "conteo": {"exactas": exactas, "imagenes": len(imgs), "tasa": round(exactas / max(1, len(imgs)), 3)},
            "map50": round(float(m.box.map50), 4), "map50_95": round(float(m.box.map), 4), "por_clase": por_clase}

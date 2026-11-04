@@ -130,6 +130,9 @@ def test_parametros_y_kpi():
         _falla(ValueError, entrenar.parametros, malo)
     assert entrenar.nombre_run("dataset_p4_det_20261103-1000", "det") == "dataset_p4_det_20261103-1000"
     assert entrenar.nombre_run("dataset_p4_ambos_20261103-1000", "det") == "dataset_p4_ambos_20261103-1000_det"
+    assert entrenar.dispositivo("", gpus=2) == ("0,1", "0") and entrenar.dispositivo("", gpus=0) == ("cpu", "cpu")
+    assert entrenar.dispositivo("0", gpus=2) == ("0", "0") and entrenar.parametros({"device": "0, 1"})["device"] == "0,1"
+    _falla(ValueError, entrenar.parametros, {"device": "gpu"})
     ex, err, real = entrenar.kpi_conteo([(Counter({0: 2}), Counter({0: 2})), (Counter({1: 1}), Counter({0: 1}))])
     assert ex == 1 and err == Counter({1: 1, 0: 1}) and real == Counter({0: 2, 1: 1})
 
@@ -161,10 +164,10 @@ class YOLOFalso:
         (Path(project) / name / "results.csv").write_text("epoch,loss\n1,0.5\n2,0.4\n", encoding="utf-8")
         YOLOFalso.visto = {"modelo": self.modelo, "data": data, **kw}
 
-    def val(self, data, imgsz, plots):
+    def val(self, data, imgsz, plots, **kw):
         return NS(box=NS(ap_class_index=[0, 1], ap50=[0.9, 0.8], ap=[0.6, 0.5], map50=0.85, map=0.55))
 
-    def predict(self, ruta, imgsz, conf, verbose):
+    def predict(self, ruta, imgsz, conf, verbose, **kw):
         return [NS(boxes=NS(cls=_Lista(PRED[Path(ruta).stem])))]
 
 

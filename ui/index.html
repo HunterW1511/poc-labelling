@@ -88,7 +88,7 @@ a{color:var(--ac)}
 <label class="chico">Modelo <input id="amodelo" type="text" placeholder="qwen2.5:14b"></label>
 <label class="chico"><input id="anuevo" type="checkbox"> --nuevo (sin spec previa)</label>
 </div>
-<div class="fila" style="margin-top:8px"><button class="pri" id="aenviar">Enviar a Colab</button></div>
+<div class="fila" style="margin-top:8px"><button class="pri" id="aenviar">Enviar trabajo</button></div>
 </div>
 <div id="ares"><p class="chico">Escribe un slug y pulsa "Ver ultimo resultado".</p></div>
 </div>
@@ -265,12 +265,14 @@ async function cargarAsistente() {
   const st = d.estado || {}, r = d.resultado;
   let h = "";
   if (d.error) h += '<p class="avisos">' + esc(d.error) + "</p>";
-  if (st.ultimo === "pendiente") h += '<div class="sig">Esperando a Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva). Esta vista se revisa sola cada 15 s.</div>';
-  if (st.ultimo === "error") h += '<div class="sig">El ultimo trabajo fallo en Colab. Para reintentar usa Reintentar en Pasos externos (trabajos --reintentar) y corre otra vez la celda 2.</div><pre class="mini">' + esc(d.error_colab || "") + "</pre>";
+  const kg = d.ejecutor === "kaggle", ej = kg ? "Kaggle" : "Colab";
+  if (st.ultimo === "pendiente") h += '<div class="sig">' + (kg ? "Esperando a Kaggle: en Pasos externos pulsa 'Enviar a Kaggle' y, cuando termine, 'Traer de Kaggle'."
+    : "Esperando a Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva).") + " Esta vista se revisa sola cada 15 s.</div>";
+  if (st.ultimo === "error") h += '<div class="sig">El ultimo trabajo fallo en ' + ej + ". Para reintentar usa Reintentar en Pasos externos" + (kg ? " y vuelve a Enviar a Kaggle." : " y corre otra vez la celda 2.") + '</div><pre class="mini">' + esc(d.error_colab || "") + "</pre>";
   if (!r && !st.ultimo) h += '<p class="chico">Sin trabajos del asistente para ' + esc(slug) + ".</p>";
   if (r) {
     h += '<p class="chico">Resultado ' + esc(r.trabajo) + " | stt " + esc(r.stt || "no") + " | llm " + esc(r.llm_seg) + " s" +
-      (st.ultimo === "pendiente" ? " | hay uno mas nuevo en Colab" : "") + "</p>";
+      (st.ultimo === "pendiente" ? " | hay uno mas nuevo en " + ej : "") + "</p>";
     h += "<h3>Transcripcion</h3><p class=\"chico\">" + esc(r.transcripcion || "-") + "</p>";
     const errs = (d.errores || []).concat(r.problemas || []);
     if (errs.length) h += '<h3>No se puede aplicar</h3><div class="avisos">' + lista(errs) + "</div>";
@@ -383,7 +385,7 @@ function tarjeta(t) {
   const a = t.asistente;
   if (a) h += '<p class="chico">Asistente: ' + esc(a.ultimo) + " (" + esc(a.trabajo) + ")" + (a.aplicada ? " | spec aplicada" : "") + "</p>";
   const lo = t.lotes;
-  if (lo && (lo.en_colab.length || lo.sin_importar.length)) h += '<p class="chico">Lotes en Colab: ' + lo.en_colab.length + " | predicciones sin importar: " + lo.sin_importar.length + "</p>";
+  if (lo && (lo.en_colab.length || lo.sin_importar.length)) h += '<p class="chico">Lotes en el worker: ' + lo.en_colab.length + " | predicciones sin importar: " + lo.sin_importar.length + "</p>";
   const m = t.modelos;
   if (m && m.n) h += '<p class="chico">Modelos: ' + m.n + " | activo: " + esc(m.activo || "ninguno") + '</p><div class="tablas"><pre class="mini">' + esc((m.tabla || []).join("\n")) + "</pre></div>";
   if (t.runs_sin_registrar && t.runs_sin_registrar.length) h += '<p class="chico">Corridas sin registrar: ' + esc(t.runs_sin_registrar.join(", ")) + "</p>";

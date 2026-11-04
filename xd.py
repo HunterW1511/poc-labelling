@@ -217,7 +217,7 @@ def cmd_lote_importar(a):
     return 0
 
 
-ENTRENAMIENTO = ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo")   # P.2.3: viajan en trabajo.json
+ENTRENAMIENTO = ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo", "device")   # P.2.3: viajan en trabajo.json
 
 
 def cmd_dataset(a):
@@ -1169,7 +1169,8 @@ def main():
     p.add_argument("--drive", action="store_true", help="copiar el zip a la carpeta datasets de Drive")
     p.add_argument("--correcciones", default="", help="'ultimo' o archivo de motor/correcciones")
     for k, ayuda in (("modelo", "yolo11n.pt / yolo11n-seg.pt"), ("imgsz", "960"), ("epochs", "100"), ("patience", "30"),
-                     ("batch", "16"), ("conf_conteo", "0.25: umbral del KPI de conteo")):
+                     ("batch", "16"), ("conf_conteo", "0.25: umbral del KPI de conteo"),
+                     ("device", "auto: todas las GPU; Kaggle T4 x2 -> 0,1")):
         p.add_argument("--" + k.replace("_", "-"), default="", help=f"entrenamiento en el worker (defecto {ayuda})")
     p.set_defaults(f=cmd_dataset)
 

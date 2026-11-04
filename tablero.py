@@ -246,7 +246,8 @@ def asistente_detalle(slug):
     La spec pasa por buzon.preparar_spec: el mismo camino que asistente-importar."""
     bz = _buzon_dir(_drive())
     ruta = PROYECTOS / slug / "spec.json"
-    out = {"slug": slug, "spec_existe": ruta.exists(), "estado": _asistente(vista(), slug) if bz else None}
+    out = {"slug": slug, "spec_existe": ruta.exists(), "estado": _asistente(vista(), slug) if bz else None,
+           "ejecutor": ejecutor()}
     if not bz:
         out["error"] = "No encuentro el buzon del asistente en el transporte (en Drive: ASISTENTE_DRIVE o LOTES_DRIVE)"
         return out

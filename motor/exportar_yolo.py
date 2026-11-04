@@ -102,12 +102,12 @@ def main():
     ap.add_argument("--formato", choices=["det", "seg", "ambos"], default="det")
     ap.add_argument("--val", type=float, default=0.2)
     ap.add_argument("--correcciones", default="", help="archivo de corregir_pares.py o 'ultimo'")
-    for k in ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo"):      # parametros del entrenamiento
-        ap.add_argument("--" + k.replace("_", "-"), default="", help=f"entrenamiento (defecto {DEFECTOS[k] or 'yolo11n'})")
+    for k in ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo", "device"):   # parametros del entrenamiento
+        ap.add_argument("--" + k.replace("_", "-"), default="", help=f"entrenamiento (defecto {DEFECTOS[k] or 'auto'})")
     a = ap.parse_args()
     try:                                     # se valida ANTES de exportar: un error no deja un zip inutil
         params = parametros({"formato": "seg" if a.formato == "seg" else "det",
-                             **{k: getattr(a, k) for k in ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo")}})
+                             **{k: getattr(a, k) for k in ("modelo", "imgsz", "epochs", "patience", "batch", "conf_conteo", "device")}})
     except ValueError as e:
         raise SystemExit(f"parametros de entrenamiento: {e}")
     corr = cargar_correcciones(a.correcciones, a.proyecto)
