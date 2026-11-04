@@ -4,7 +4,7 @@ Uso: con = abrir(ruta); t = crear(con, "preetiquetado", "lote_p3_x.zip", proyect
 import re, sqlite3, time
 from pathlib import Path
 
-ESQUEMA = 1
+ESQUEMA = 2                               # 1: P.1 | 2: P.2.7b (operador, envio, tabla envios)
 TIPOS = ("asistente", "preetiquetado", "entrenamiento", "precodificacion")
 ESTADOS = ("pendiente", "enviado", "en_proceso", "listo", "importado", "error", "archivado")
 TRANSICIONES = {
@@ -31,6 +31,16 @@ CREATE TABLE eventos (
 CREATE INDEX trabajos_estado ON trabajos (estado, tipo);
 CREATE INDEX eventos_trabajo ON eventos (trabajo, id);
 """
+# P.2.7b: un envio agrupa trabajos que viajan juntos a un worker remoto (Kaggle); el operador es quien lo lanza (D2)
+_DDL_2 = """
+ALTER TABLE trabajos ADD COLUMN operador TEXT;
+ALTER TABLE trabajos ADD COLUMN envio TEXT;
+CREATE TABLE envios (
+  id INTEGER PRIMARY KEY, nombre TEXT NOT NULL UNIQUE, proveedor TEXT NOT NULL, operador TEXT, estado TEXT NOT NULL,
+  creado TEXT NOT NULL, actualizado TEXT NOT NULL, detalle TEXT);
+CREATE INDEX trabajos_envio ON trabajos (envio);
+"""
+ESTADOS_ENVIO = ("lanzado", "corriendo", "terminado", "fallido", "traido")
 
 
 class Conflicto(ValueError):
@@ -69,7 +79,12 @@ def abrir(ruta, timeout=10.0):
     if ver < 1:
         with con:
             con.executescript(_DDL)
-            con.execute(f"PRAGMA user_version = {ESQUEMA}")
+            con.execute("PRAGMA user_version = 1")
+        ver = 1
+    if ver < 2:                                    # migracion 1 -> 2: conserva todos los trabajos
+        with con:
+            con.executescript(_DDL_2)
+            con.execute("PRAGMA user_version = 2")
     return con
 
 
@@ -152,8 +167,9 @@ def mover(con, id, a, desde=None, resultado=None, detalle=None, ahora=None):
     error = _recortar(detalle) if a == "error" else (None if a == "pendiente" else t["error"])
     with con:
         cur = con.execute("UPDATE trabajos SET estado = ?, actualizado = ?, error = ?, resultado = COALESCE(?, resultado),"
-                          " intentos = intentos + ? WHERE id = ? AND estado = ?",
-                          (a, f, error, resultado, 1 if a == "pendiente" else 0, id, actual))
+                          " intentos = intentos + ?, envio = CASE WHEN ? THEN NULL ELSE envio END"
+                          " WHERE id = ? AND estado = ?",
+                          (a, f, error, resultado, 1 if a == "pendiente" else 0, a == "pendiente", id, actual))
         if cur.rowcount == 0:
             raise Conflicto(f"trabajo {id}: otro proceso lo movio desde {actual!r}")
         _evento(con, id, actual, a, f, detalle)
@@ -173,6 +189,67 @@ def fallo(con, id, detalle, ahora=None):
             raise Conflicto(f"trabajo {id}: otro proceso lo movio desde {t['estado']!r}")
         _evento(con, id, t["estado"], t["estado"], f, f"fallo: {detalle}")
     return obtener(con, id)
+
+
+# --- Envios (P.2.7b): trabajos que viajan juntos a un worker remoto
+def por_enviar(con):
+    """Trabajos en 'enviado' que aun no van en ningun envio (en Kaggle: el zip esta en el espejo local)."""
+    return [dict(r) for r in con.execute("SELECT * FROM trabajos WHERE estado = 'enviado' AND envio IS NULL ORDER BY id")]
+
+
+def crear_envio(con, nombre, proveedor, operador, ids, ahora=None):
+    """Registra el envio y le asigna los trabajos (solo si siguen en 'enviado' sin envio). -> envio (dict)."""
+    nombre = _nombre(nombre, "envio")
+    f = _ahora(ahora)
+    with con:
+        con.execute("INSERT INTO envios (nombre, proveedor, operador, estado, creado, actualizado) VALUES (?, ?, ?, ?, ?, ?)",
+                    (nombre, proveedor, operador, "lanzado", f, f))
+        for i in ids:
+            cur = con.execute("UPDATE trabajos SET envio = ?, operador = ?, actualizado = ? "
+                              "WHERE id = ? AND estado = 'enviado' AND envio IS NULL", (nombre, operador, f, i))
+            if cur.rowcount == 0:
+                raise Conflicto(f"trabajo {i}: ya no esta en 'enviado' sin envio")
+            _evento(con, i, "enviado", "enviado", f, f"en envio {nombre} ({proveedor}, {operador})")
+    return envio(con, nombre)
+
+
+def envio(con, nombre):
+    return _fila(con.execute("SELECT * FROM envios WHERE nombre = ?", (nombre,)).fetchone())
+
+
+def ultimo_envio(con, proveedor=None):
+    sql = "SELECT * FROM envios" + (" WHERE proveedor = ?" if proveedor else "") + " ORDER BY id DESC LIMIT 1"
+    return _fila(con.execute(sql, (proveedor,) if proveedor else ()).fetchone())
+
+
+def trabajos_de(con, nombre):
+    return [dict(r) for r in con.execute("SELECT * FROM trabajos WHERE envio = ? ORDER BY id", (nombre,))]
+
+
+def marcar_envio(con, nombre, estado, detalle=None, ahora=None):
+    """Cambia el estado del envio; 'corriendo' pasa sus trabajos de enviado a en_proceso. -> envio."""
+    if estado not in ESTADOS_ENVIO:
+        raise ValueError(f"estado de envio {estado!r}: {ESTADOS_ENVIO}")
+    f = _ahora(ahora)
+    with con:
+        cur = con.execute("UPDATE envios SET estado = ?, actualizado = ?, detalle = COALESCE(?, detalle) WHERE nombre = ?",
+                          (estado, f, _recortar(detalle), nombre))
+        if cur.rowcount == 0:
+            raise KeyError(f"no existe el envio {nombre}")
+    if estado == "corriendo":
+        for t in trabajos_de(con, nombre):
+            if t["estado"] == "enviado":
+                mover(con, t["id"], "en_proceso", desde="enviado", detalle=f"el worker corre el envio {nombre}", ahora=ahora)
+    return envio(con, nombre)
+
+
+def sin_salida(con, nombre, detalle, ahora=None):
+    """Tras traer un envio terminado: sus trabajos que siguen sin resultado pasan a error (asi se pueden reintentar)."""
+    hechos = []
+    for t in trabajos_de(con, nombre):
+        if t["estado"] in ("enviado", "en_proceso"):
+            hechos.append(mover(con, t["id"], "error", detalle=detalle, ahora=ahora))
+    return hechos
 
 
 # --- Reconciliacion (P.1.3): lo UNICO que mira archivos del transporte. Puro: recibe nombres, no lee disco. ---

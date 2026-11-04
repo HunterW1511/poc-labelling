@@ -116,3 +116,21 @@ reconciliacion lo lleva a `listo` cuando aparece el resultado.
 **Cumplido el 03/11/2026 en el hub (laptop i7-7600U):** un trabajo `asistente` real en Drive siguio en `enviado` tras
 `docker compose restart motor` y reiniciar `ui.py` (CLI y `/api/externos` con su id, reconciliacion sin
 diferencias); luego `archivar --aplicar` lo dejo en `archivado` y la UI dejo de mostrarlo. Datos de prueba borrados.
+
+## 8. Esquema 2: envios (P.2.7b)
+
+Migracion automatica 1 -> 2 al abrir la base (conserva todos los trabajos; `PRAGMA user_version = 2`).
+
+- `trabajos` gana `operador` (usuario de Kaggle que lo envio; una cuenta por persona, D2) y `envio` (nombre del
+  envio en el que viaja).
+- Tabla nueva `envios (nombre, proveedor, operador, estado, creado, actualizado, detalle)`; estados:
+  `lanzado -> corriendo -> terminado | fallido -> traido`.
+- Con `TRANSPORTE=kaggle`, `enviado` significa "el zip esta en el espejo local"; `xd.py worker --enviar` toma los
+  `enviado` sin envio (`por_enviar`), los sube juntos y solo si el push del kernel salio bien los asigna al envio
+  (`crear_envio`). Un fallo antes de eso no cambia la cola.
+- `worker --estado --aplicar`: `corriendo` pasa los trabajos del envio a `en_proceso`.
+- `worker --traer --aplicar`: baja la salida al espejo, reconcilia (`listo` o `error` por trabajo) y lo que no
+  volvio pasa a `error` (`sin_salida`), para poder Reintentar. Un reintento (`error -> pendiente`) saca al trabajo
+  de su envio y el siguiente `--enviar` lo vuelve a tomar.
+- UI (Pasos externos, solo con Kaggle): **Enviar a Kaggle**, **Estado de Kaggle**, **Traer de Kaggle**, cada uno con
+  reporte y confirmacion; el texto de cada trabajo dice en que punto esta su envio.

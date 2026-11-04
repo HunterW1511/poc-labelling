@@ -161,7 +161,7 @@ def cmd_lote_exportar(a):
     _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto)
     print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
     _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
-    print("Siguiente: en Colab corre worker.ipynb (celda 2); luego Reconciliar y  python xd.py lote-importar")
+    print(_siguiente_externo(T, "python xd.py lote-importar"))
     return 0
 
 
@@ -232,6 +232,7 @@ def cmd_dataset(a):
         _en_cola(zp.name, _q_crear, "entrenamiento", zp.name, "pendiente", proyecto=a.proyecto)
         print(f"Enviado ({T.nombre}): {T.enviar('datasets', zp)}")
         _en_cola(zp.name, _q_enviado, "entrenamiento", zp.name)
+        print(_siguiente_externo(T, f"python xd.py registrar {a.proyecto} --run ultimo --activar"))
     return 0
 
 
@@ -620,27 +621,36 @@ def cmd_kaggle_pesos(a):
 
 
 # ----------------------------------------------------------------- P.2.7 worker en Kaggle
+ENVIO_DE_KERNEL = {"queued": "lanzado", "new_script": "lanzado", "running": "corriendo", "complete": "terminado",
+                   "error": "fallido", "cancel_requested": "corriendo", "cancel_acknowledged": "fallido"}
+
+
 def _kaggle_dir():
     return RAIZ / "datos" / "kaggle"
 
 
-def _envios():
-    """Registro local de envios (P.2.7a; en P.2.7b pasa a la cola SQLite)."""
-    f = _kaggle_dir() / "envios.json"
-    return json.loads(f.read_text(encoding="utf-8")) if f.is_file() else []
+def _siguiente_externo(T, despues):
+    """Que hacer despues de dejar un trabajo en el transporte (Colab o Kaggle)."""
+    if T.nombre == "kaggle":
+        return ("Siguiente:  python xd.py worker --enviar --aplicar  (o 'Enviar a Kaggle' en la UI); cuando termine, "
+                f"worker --traer --aplicar; luego  {despues}")
+    return f"Siguiente: en Colab corre worker.ipynb (celda 2); luego Reconciliar y  {despues}"
 
 
-def _guardar_envios(reg):
-    f = _kaggle_dir() / "envios.json"
-    f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_name("envios.json.tmp")
-    tmp.write_text(json.dumps(reg, ensure_ascii=True, indent=1), encoding="utf-8")
-    tmp.replace(f)
+def _leer_error(c):
+    def leer(nombre):
+        for d in (c.get("asistente"), c.get("lotes"), c.get("datasets")):
+            if d and (d / nombre).is_file():
+                return (d / nombre).read_text(encoding="utf-8", errors="replace")
+        return nombre
+    return leer
 
 
 def cmd_worker(a):
-    """Envia los trabajos pendientes a Kaggle, consulta el kernel y trae su salida. Todo con reporte primero."""
+    """Envia a Kaggle los trabajos en espera, consulta el kernel y trae su salida. Todo con reporte primero.
+    El estado vive en la cola (esquema 2: tabla envios); Kaggle solo transporta."""
     import kaggle_xd as K
+    import transporte
     T = _transporte()
     if T.nombre != "kaggle":
         raise SystemExit(f"worker es para TRANSPORTE=kaggle (ahora: {T.nombre}); con Drive usa worker.ipynb en Colab")
@@ -651,82 +661,122 @@ def cmd_worker(a):
     cred = K.credencial()
     if not cred:
         raise SystemExit("Sin credencial de Kaggle: guarda tu API token en ~/.kaggle/access_token")
-    reg = _envios()
-    if a.estado:
+    C = _cola_mod()
+    con = _cola(crear=a.aplicar)
+    try:
+        ult = C.ultimo_envio(con, "kaggle") if con else None
+        if a.estado:
+            est, msg = K.estado_kernel(kernel)
+            print(f"kernel {kernel}: {est or 'sin ejecuciones o sin acceso'}" + (f" | {msg}" if msg else ""))
+            if not ult:
+                print("Sin envios registrados en la cola")
+                return 0
+            n = len(C.trabajos_de(con, ult["nombre"]))
+            print(f"ultimo envio {ult['nombre']}: {ult['estado']} | {n} trabajo(s) | lanzado {ult['creado']}")
+            nuevo = ENVIO_DE_KERNEL.get(est or "")
+            if ult["estado"] in ("lanzado", "corriendo") and nuevo and nuevo != ult["estado"]:
+                print(f"  envio {ult['estado']} -> {nuevo}" + ("  (sus trabajos -> en_proceso)" if nuevo == "corriendo" else ""))
+                if a.aplicar:
+                    C.marcar_envio(con, ult["nombre"], nuevo, msg or None)
+                    print("OK cola al dia")
+                else:
+                    print("SOLO REPORTE: --aplicar lo anota en la cola")
+            return 0
+        if a.enviar:
+            filas, avisos = [], []
+            for t in (C.por_enviar(con) if con else []):
+                c = transporte.carpeta_de(t["archivo"])
+                f = T.carpeta(c) / t["archivo"] if c else None
+                if f is not None and f.is_file():
+                    filas.append((t, c, f))
+                else:
+                    avisos.append(f"trabajo {t['id']} ({t['archivo']}): su zip no esta en el espejo")
+            en_cola = {t["archivo"] for t, _, _ in filas} | ({t["archivo"] for t in C.listar(con)} if con else set())
+            for c in K.TIPO_DE_CARPETA:
+                for f in sorted(T.carpeta(c).glob("*.zip")):
+                    if f.name not in en_cola:
+                        avisos.append(f"{f.name}: esta en el espejo pero no en la cola (python xd.py trabajos --reconciliar --aplicar)")
+            print(f"kernel {kernel} (PRIVADO, GPU T4) | operador {u} | credencial {cred}")
+            for t, c, f in filas:
+                print(f"  {t['id']:>4} {t['tipo']:<14}{f.name}  ({f.stat().st_size / 1e6:.1f} MB)")
+            for v in avisos:
+                print(f"AVISO: {v}")
+            if not filas:
+                print("Nada que enviar")
+                return 0
+            if ult and ult["estado"] in ("lanzado", "corriendo"):
+                est, _ = K.estado_kernel(kernel)
+                if est in K.ACTIVOS:
+                    raise SystemExit(f"El envio {ult['nombre']} sigue {est}: espera a que termine antes de otro")
+            if not a.aplicar:
+                print(f"SOLO REPORTE: {len(filas)} trabajo(s); --aplicar sube el envio (dataset privado "
+                      f"{u}/{K.SLUG_ENVIOS}, borra sus versiones viejas) y lanza el kernel")
+                return 0
+            nombre = f"envio_{time.strftime('%Y%m%d-%H%M%S')}"
+            carpeta, kcarp = _kaggle_dir() / "envio", _kaggle_dir() / "kernel"
+            try:
+                K.armar_envio([(c, f) for _, c, f in filas], carpeta, u, nombre, u)
+                ds = f"{u}/{K.SLUG_ENVIOS}"
+                t0 = time.time()
+                rc, out = K.subir_envio(carpeta, bool(K.estado_dataset(ds)), nombre)
+                print(K.ocultar(out)[-1500:])
+                if rc:
+                    raise SystemExit(f"no se pudo subir el envio (rc {rc}); nada cambio en la cola")
+                subida = round(time.time() - t0, 1)
+                listo = K.esperar_listo(ds)
+                if listo is None:
+                    raise SystemExit(f"{ds} no quedo listo; reintenta worker --enviar mas tarde (nada cambio en la cola)")
+                K.armar_kernel(RAIZ / "motor" / "lanzador.py", kcarp, u)
+                rc, out = K.push_kernel(kcarp, limite_s=a.limite * 60)
+                print(K.ocultar(out)[-1500:])
+                if rc:
+                    raise SystemExit(f"no se pudo lanzar el kernel (rc {rc}); nada cambio en la cola")
+            finally:
+                shutil.rmtree(carpeta, ignore_errors=True)
+                shutil.rmtree(kcarp, ignore_errors=True)
+            C.crear_envio(con, nombre, "kaggle", u, [t["id"] for t, _, _ in filas])
+            C.marcar_envio(con, nombre, "lanzado", f"subida {subida} s; dataset listo tras {listo} s")
+            print(f"OK {nombre}: subida {subida} s | dataset listo tras {listo} s | kernel lanzado")
+            print("Siguiente:  python xd.py worker --estado  (hasta 'complete')  y luego  python xd.py worker --traer --aplicar")
+            return 0
+        # --traer
+        if not ult:
+            raise SystemExit("No hay envios a Kaggle en la cola")
         est, msg = K.estado_kernel(kernel)
-        ult = reg[-1] if reg else None
-        print(f"kernel {kernel}: {est or 'sin ejecuciones o sin acceso'}" + (f" | {msg}" if msg else ""))
-        if ult:
-            print(f"ultimo envio {ult['envio']} ({len(ult['archivos'])} trabajo(s)), lanzado {ult['lanzado']}")
-        return 0
-    if a.enviar:
-        enviados = {n for e in reg for n in e["archivos"]}
-        pend = [(c, f) for c in K.TIPO_DE_CARPETA for d in [T.carpeta(c)] if d
-                for f in sorted(d.glob("*.zip")) if f.name not in enviados]
-        print(f"kernel {kernel} (PRIVADO, GPU T4) | operador {u} | credencial {cred}")
-        for c, f in pend:
-            print(f"  {K.TIPO_DE_CARPETA[c]:<14}{f.name}  ({f.stat().st_size / 1e6:.1f} MB)")
-        if not pend:
-            print("Nada que enviar (los zips del espejo ya se enviaron)")
-            return 0
-        est, _ = K.estado_kernel(kernel) if reg else (None, "")
-        if est in K.ACTIVOS:
-            raise SystemExit(f"El kernel sigue {est}: espera a que termine (worker --estado) antes de otro envio")
+        if est not in ("complete", "error"):
+            raise SystemExit(f"El kernel esta {est or 'sin ejecuciones'}: espera a 'complete' (worker --estado)")
+        sal = _kaggle_dir() / "salida"
+        rc, out = K.bajar_salida(kernel, sal)
+        if rc:
+            raise SystemExit(f"no se pudo bajar la salida (rc {rc}): {out[-300:]}")
+        for f in sorted(sal.glob("*.log")):
+            print(f"--- {f.name} (final)\n" + K.ocultar(f.read_text(encoding="utf-8", errors="replace"))[-1500:])
+        if est == "error":
+            print(f"El kernel termino en ERROR: {msg}")
+        archivos = K.archivos_salida(sal)
+        print(f"envio {ult['nombre']} ({ult['estado']}): {len(archivos)} archivo(s) de salida")
+        for rel, f in archivos:
+            print(f"  {'copiando' if a.aplicar else 'COPIARIA'} {rel} -> espejo")
         if not a.aplicar:
-            print(f"SOLO REPORTE: {len(pend)} trabajo(s); --aplicar sube el envio (dataset privado "
-                  f"{u}/{K.SLUG_ENVIOS}, borra sus versiones viejas) y lanza el kernel")
+            print("SOLO REPORTE: --aplicar los copia al espejo, reconcilia la cola y marca en error lo que no volvio")
             return 0
-        nombre = f"envio_{time.strftime('%Y%m%d-%H%M%S')}"
-        carpeta, kcarp = _kaggle_dir() / "envio", _kaggle_dir() / "kernel"
-        try:
-            envio = K.armar_envio(pend, carpeta, u, nombre, u)
-            ds = f"{u}/{K.SLUG_ENVIOS}"
-            t0 = time.time()
-            rc, out = K.subir_envio(carpeta, bool(K.estado_dataset(ds)), nombre)
-            print(K.ocultar(out)[-1500:])
-            if rc:
-                raise SystemExit(f"no se pudo subir el envio (rc {rc})")
-            subida = round(time.time() - t0, 1)
-            listo = K.esperar_listo(ds)
-            if listo is None:
-                raise SystemExit(f"{ds} no quedo listo; reintenta worker --enviar mas tarde")
-            K.armar_kernel(RAIZ / "motor" / "lanzador.py", kcarp, u)
-            rc, out = K.push_kernel(kcarp, limite_s=a.limite * 60)
-            print(K.ocultar(out)[-1500:])
-            if rc:
-                raise SystemExit(f"no se pudo lanzar el kernel (rc {rc})")
-        finally:
-            shutil.rmtree(carpeta, ignore_errors=True)
-            shutil.rmtree(kcarp, ignore_errors=True)
-        reg.append({"envio": nombre, "archivos": [t["archivo"] for t in envio["trabajos"]], "operador": u,
-                    "lanzado": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "subida_s": subida, "dataset_listo_s": listo})
-        _guardar_envios(reg)
-        print(f"OK {nombre}: subida {subida} s | dataset listo tras {listo} s | kernel lanzado")
-        print("Siguiente:  python xd.py worker --estado  (hasta 'complete')  y luego  python xd.py worker --traer")
+        K.integrar(sal, T.raiz)
+        if ult["estado"] in ("lanzado", "corriendo"):
+            C.marcar_envio(con, ult["nombre"], ENVIO_DE_KERNEL[est], msg or None)
+        c = _carpetas_transporte()
+        r = C.reconciliar(C.listar(con), _archivos_transporte(c))
+        hechas, av = C.aplicar(con, r["acciones"], leer_error=_leer_error(c))
+        for v in av:
+            print(f"AVISO: {v}")
+        perdidos = C.sin_salida(con, ult["nombre"], f"el envio {ult['nombre']} termino ({est}) sin resultado para este trabajo")
+        C.marcar_envio(con, ult["nombre"], "traido")
+        print(f"OK {len(archivos)} archivo(s) en el espejo | {hechas} cambio(s) en la cola"
+              + (f" | {len(perdidos)} sin resultado -> error (Reintentar)" if perdidos else ""))
+        print("Siguiente: importa como siempre (asistente-importar, lote-importar o registrar)")
         return 0
-    est, msg = K.estado_kernel(kernel)
-    if est not in ("complete", "error"):
-        raise SystemExit(f"El kernel esta {est or 'sin ejecuciones'}: espera a 'complete' (worker --estado)")
-    sal = _kaggle_dir() / "salida"
-    rc, out = K.bajar_salida(kernel, sal)
-    if rc:
-        raise SystemExit(f"no se pudo bajar la salida (rc {rc}): {out[-300:]}")
-    for f in sorted(sal.glob("*.log")):
-        print(f"--- {f.name} (final)\n" + K.ocultar(f.read_text(encoding="utf-8", errors="replace"))[-1500:])
-    if est == "error":
-        print(f"El kernel termino en ERROR: {msg}")
-    archivos = K.archivos_salida(sal)
-    for rel, f in archivos:
-        print(f"  {'copiando' if a.aplicar else 'COPIARIA'} {rel} -> espejo")
-    if not archivos:
-        print("La salida no trae resultados de trabajos")
-    if not a.aplicar:
-        print("SOLO REPORTE: --aplicar los copia al espejo local; despues  python xd.py trabajos --reconciliar")
-        return 0
-    hechas = K.integrar(sal, T.raiz)
-    print(f"OK {len(hechas)} archivo(s) en {T.raiz}")
-    print("Siguiente:  python xd.py trabajos --reconciliar  (y despues importar como siempre)")
-    return 0
+    finally:
+        if con:
+            con.close()
 
 
 def cmd_ver(a):
@@ -778,7 +828,7 @@ def cmd_asistente(a):
         _en_cola(zp.name, _q_reemplazar, a.slug, zp.name)
     print(f"  audio: {e['audio'] or 'no'} | texto: {len(e['texto'])} car. | vocabulario: {e['vocabulario'] or 'no'}"
           f" | respuestas: {'si' if e['respuestas'] else 'no'} | previa: {'si' if previa else 'no'} | {e['modelo_llm']}")
-    print("Siguiente: en Colab corre worker.ipynb (celda 2); luego  python xd.py asistente-importar " + a.slug)
+    print(_siguiente_externo(_transporte(), f"python xd.py asistente-importar {a.slug}"))
     return 0
 
 
@@ -943,8 +993,8 @@ def _carpetas_transporte():
 
 def _archivos_transporte(c):
     """Nombres (y mtimes) que necesita cola_trabajos.reconciliar(). Solo lectura."""
-    def mt(d):
-        return {f.name: f.stat().st_mtime for f in d.iterdir() if f.is_file()} if d else None
+    def mt(d):                                     # None = carpeta no disponible; {} = vacia o aun no creada
+        return ({f.name: f.stat().st_mtime for f in d.iterdir() if f.is_file()} if d.is_dir() else {}) if d else None
     def nombres(d):
         return {f.name for f in d.iterdir()} if d and d.is_dir() else set()
     reg = set()
@@ -959,7 +1009,8 @@ def _archivos_transporte(c):
             "lotes": mt(c["lotes"]), "lotes_archivo": nombres(c["lotes"] and c["lotes"] / "_archivo"),
             "lotes_local": nombres(LOTES_LOCAL), "datasets": mt(c["datasets"]),
             "datasets_archivo": nombres(c["datasets"] and c["datasets"] / "_archivo"),
-            "runs": {r.name for r in runs.iterdir() if (r / "weights" / "metricas.json").exists()} if runs else None,
+            "runs": ({r.name for r in runs.iterdir() if (r / "weights" / "metricas.json").exists()} if runs.is_dir() else set())
+                    if runs else None,
             "registrados": reg,
             "specs": {f.parent.name: f.stat().st_mtime for f in (RAIZ / "motor" / "proyectos").glob("*/spec.json")}}
 
@@ -1189,7 +1240,7 @@ def main():
     p.set_defaults(f=cmd_aceptacion)
     p = sub.add_parser("worker", help="P.2.7: envia los trabajos a Kaggle, consulta el kernel y trae la salida")
     p.add_argument("--enviar", action="store_true", help="sube los zips pendientes del espejo y lanza el kernel")
-    p.add_argument("--estado", action="store_true", help="estado del kernel (queued, running, complete, error)")
+    p.add_argument("--estado", action="store_true", help="estado del kernel; con --aplicar lo anota en la cola")
     p.add_argument("--traer", action="store_true", help="baja la salida del kernel al espejo local")
     p.add_argument("--limite", type=int, default=0, help="minutos maximos del kernel (0 = el de Kaggle)")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")

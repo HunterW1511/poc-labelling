@@ -68,7 +68,7 @@ a{color:var(--ac)}
 <p id="servicios">Cargando servicios...</p>
 </section>
 <section class="card" id="externos">
-<div class="fila" style="justify-content:space-between"><h2>Pasos externos (<span id="ejecutor">colab</span>)</h2><div><button id="xrec" style="display:none">Reconciliar</button> <button id="xact">Actualizar</button></div></div>
+<div class="fila" style="justify-content:space-between"><h2>Pasos externos (<span id="ejecutor">colab</span>)</h2><div><span id="xkag" style="display:none"><button id="xenv">Enviar a Kaggle</button> <button id="xest">Estado de Kaggle</button> <button id="xtra">Traer de Kaggle</button> </span><button id="xrec" style="display:none">Reconciliar</button> <button id="xact">Actualizar</button></div></div>
 <div id="xavisos" class="avisos"></div>
 <div id="xlista"><p class="chico">Cargando...</p></div>
 </section><section class="card" id="asistente">
@@ -304,6 +304,8 @@ async function cargarExternos() {
   $("#ejecutor").textContent = d.ejecutor;
   $("#xavisos").innerHTML = (d.avisos || []).map(esc).join("<br>");
   $("#xrec").style.display = d.sin_guardar ? "" : "none";
+  $("#xkag").style.display = d.ejecutor === "kaggle" ? "" : "none";
+  if (d.envio) $("#xavisos").innerHTML += (d.avisos && d.avisos.length ? "<br>" : "") + "Ultimo envio a Kaggle: " + esc(d.envio.nombre) + " (" + esc(d.envio.estado) + ")";
   XITEMS = d.items || [];
   if (!XITEMS.length) { $("#xlista").innerHTML = '<p class="chico">Nada pendiente en ' + esc(d.ejecutor) + ".</p>"; return; }
   $("#xlista").innerHTML = XITEMS.map((x, i) => '<div class="sig"><b>' + esc(XEST[x.estado] || x.estado) + "</b> | " + esc(x.tipo) +
@@ -324,6 +326,11 @@ $("#xlista").onclick = e => {
 };
 $("#xact").onclick = cargarExternos;
 $("#xrec").onclick = () => correrAccion({accion: "trabajos", slug: null, n: null, opciones: {"--reconciliar": true}}, false);
+// P.2.7b: Kaggle (reporte primero; la UI pide confirmar el --aplicar)
+const kag = op => () => correrAccion({accion: "worker", slug: null, n: null, opciones: {[op]: true}}, false);
+$("#xenv").onclick = kag("--enviar");
+$("#xest").onclick = kag("--estado");
+$("#xtra").onclick = kag("--traer");
 // ---------------------------------------------------------------- tablero (E.2, E.3)
 function visible(k, a, t, sa) {
   if (a.id === "slug" && !t.slug) return false;

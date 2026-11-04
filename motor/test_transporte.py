@@ -51,8 +51,12 @@ def test_carpeta_de_y_elegir():
     assert T.carpeta_de("lote_p3_x.zip") == "lotes" and T.carpeta_de("dataset_p4_x.zip") == "datasets"
     assert T.carpeta_de("otra.zip") is None
     assert isinstance(T.elegir({}, "."), T.Drive) and isinstance(T.elegir({"TRANSPORTE": "Drive "}, "."), T.Drive)
-    k = T.elegir({"TRANSPORTE": "kaggle"}, "raiz")
-    assert isinstance(k, T.Kaggle) and k.raiz == Path("raiz") / "datos" / "kaggle" / "espejo" and k.carpeta("lotes") is None
+    with tempfile.TemporaryDirectory() as t:
+        k = T.elegir({"TRANSPORTE": "kaggle"}, t)
+        assert isinstance(k, T.Kaggle) and k.raiz == Path(t) / "datos" / "kaggle" / "espejo"
+        assert k.carpetas() == {c: k.raiz / c for c in T.CARPETAS}          # siempre hay ruta (sin avisos falsos)...
+        assert not k.raiz.exists()                                          # ...pero leer no crea nada
+        assert k.requerir("lotes", crear=True).is_dir()
     _falla(SystemExit, T.elegir, {"TRANSPORTE": "s3"}, ".")
 
 

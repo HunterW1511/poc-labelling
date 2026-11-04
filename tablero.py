@@ -65,6 +65,25 @@ def vista():
     return {"trabajos": C.proyectar(ts, r["acciones"]), "sin_guardar": len(r["acciones"]), "avisos": avisos + r["avisos"]}
 
 
+def _envio(nombre=None):
+    """Envio de la cola (el ultimo de Kaggle si no se da nombre). SOLO LECTURA; None si no hay cola."""
+    try:
+        con = xd._cola(crear=False)
+        if not con:
+            return None
+        try:
+            return C.envio(con, nombre) if nombre else C.ultimo_envio(con, "kaggle")
+        finally:
+            con.close()
+    except Exception:
+        return None
+
+
+def _ultimo_envio():
+    e = _envio()
+    return {k: e[k] for k in ("nombre", "estado", "creado", "actualizado", "detalle")} if e else None
+
+
 def lotes(v):
     """{N: {"en_colab": [zips en espera], "sin_importar": [_pred.json listos]}} (mismas claves que antes de P.1)."""
     out = {}
@@ -159,9 +178,9 @@ def siguiente(t):
         return _sig("", "Proyecto protegido: solo lectura")
     a = t.get("asistente") or {}
     if a.get("ultimo") == "pendiente":
-        return _sig("colab", "Esperando a Colab: abre worker.ipynb y corre la celda 2")
+        return _sig(ejecutor(), TEXTO_ESPERA.get(ejecutor(), TEXTO_ESPERA["colab"]))
     if a.get("ultimo") == "error":
-        return _sig("cli", "El asistente fallo en Colab: revisa el error", f"python xd.py asistente-importar {s}")
+        return _sig("cli", f"El asistente fallo en {ejecutor()}: revisa el error", f"python xd.py asistente-importar {s}")
     if a.get("ultimo") == "resultado" and not a.get("aplicada"):
         return _sig("cli", "Revisa el resultado del asistente y aplica la spec",
                     f"python xd.py asistente-importar {s}")
@@ -180,15 +199,15 @@ def siguiente(t):
     tareas, anot = ls.get("task_number") or 0, ls.get("num_tasks_with_annotations") or 0
     tienes = sum(f["tienes"] for f in fotos)
     if lo.get("en_colab"):
-        return _sig("colab", "Esperando a Colab: abre worker.ipynb y corre la celda 2")
+        return _sig(ejecutor(), TEXTO_ESPERA.get(ejecutor(), TEXTO_ESPERA["colab"]))
     if lo.get("sin_importar"):
-        return _sig("cli", "Importa las predicciones de Colab", "python xd.py lote-importar --fijar-version")
+        return _sig("cli", f"Importa las predicciones de {ejecutor()}", "python xd.py lote-importar --fijar-version")
     if s and fotos and any(f["tienes"] == 0 for f in fotos):
         return _sig("host", "Captura fotos: hay carpetas vacias", f"python capturar.py {s}")
     if s and tienes > tareas:
         return _sig("cli", f"Hay {tienes - tareas} fotos sin tarea: sincroniza", f"python xd.py sincronizar {s}")
     if t.get("runs_sin_registrar"):
-        return _sig("cli", "Registra el modelo entrenado en Colab",
+        return _sig("cli", f"Registra el modelo entrenado en {ejecutor()}",
                     f"python xd.py registrar {n} --run ultimo --activar")
     if not (t.get("modelos") or {}).get("activo"):
         if anot == 0 and not ls.get("total_predictions_number"):
@@ -196,7 +215,7 @@ def siguiente(t):
         if anot == 0:
             return _sig("label_studio", "Revisa la muestra en Label Studio y da Submit")
         if t.get("datasets"):
-            return _sig("colab", "Entrena en Colab (worker.ipynb) con el ultimo dataset (o exporta otro si revisaste mas)",
+            return _sig(ejecutor(), f"Entrena en {ejecutor()} con el ultimo dataset (o exporta otro si revisaste mas)",
                         f"python xd.py dataset {n} --drive")
         return _sig("cli", "Exporta el dataset para entrenar", f"python xd.py dataset {n} --drive")
     if tareas > anot:
@@ -258,17 +277,38 @@ def asistente_detalle(slug):
     return out
 
 EJECUTOR = xd.ENV.get("EJECUTOR", "colab")
+
+
+def ejecutor():
+    """'kaggle' si el transporte es Kaggle (P.2.7); si no, EJECUTOR del .env (colab)."""
+    try:
+        return "kaggle" if xd._transporte().nombre == "kaggle" else EJECUTOR
+    except SystemExit:
+        return EJECUTOR
+
+
+TEXTO_ESPERA = {"colab": "Esperando a Colab: abre worker.ipynb y corre la celda 2",
+          "kaggle": "En Kaggle: 'Enviar a Kaggle' y, cuando termine, 'Traer de Kaggle' (Pasos externos)"}
 # Pasos externos: al desplegar (RunPod/AWS) solo se agrega otra columna aqui; la UI no cambia
 PASOS = {
     "asistente": {"colab": "Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva)"},
     "preetiquetado": {"colab": "Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva)"},
     "entrenamiento": {"colab": "Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva); entrena el dataset mas reciente del proyecto con los parametros de xd.py dataset"},
 }
+KAGGLE = {
+    None: "Listo para Kaggle: pulsa 'Enviar a Kaggle' (worker --enviar)",
+    "lanzado": "En Kaggle ({envio}): esperando GPU; 'Estado de Kaggle' para ver si ya corre",
+    "corriendo": "En Kaggle ({envio}): corriendo; 'Traer de Kaggle' cuando termine",
+    "terminado": "En Kaggle ({envio}): terminado; pulsa 'Traer de Kaggle'",
+    "fallido": "En Kaggle ({envio}): el kernel fallo; pulsa 'Traer de Kaggle' para ver el log",
+    "traido": "En Kaggle ({envio}): traido sin resultado; Reintentar",
+}
 
 
 def _instr(tipo, **kw):
-    t = (PASOS.get(tipo) or {}).get(EJECUTOR)
-    return t.format(**kw) if t else f"{EJECUTOR}: sin instrucciones para {tipo}"
+    ej = ejecutor()
+    t = (PASOS.get(tipo) or {}).get(ej)
+    return t.format(**kw) if t else f"{ej}: sin instrucciones para {tipo}"
 
 
 def _item(tipo, archivo, estado, texto, n=None, slug=None, accion=None, id=None):
@@ -284,7 +324,10 @@ def _reintentar(t):
 def externos():
     """Trabajos que esperan o vuelven del ejecutor externo, segun la cola (SOLO LECTURA)."""
     v = vista()
-    out = {"ejecutor": EJECUTOR, "items": [], "avisos": list(v["avisos"]), "sin_guardar": v["sin_guardar"]}
+    ej = ejecutor()
+    out = {"ejecutor": ej, "items": [], "avisos": list(v["avisos"]), "sin_guardar": v["sin_guardar"],
+           "envio": _ultimo_envio() if ej == "kaggle" else None}
+    envios = {}
     if v["sin_guardar"]:
         out["avisos"].append(f"{v['sin_guardar']} cambio(s) de estado vistos en Drive sin guardar en la cola: Reconciliar")
     it = out["items"]
@@ -299,6 +342,11 @@ def externos():
                 out["avisos"].append(f"{t['archivo']}: dataset viejo en espera (Colab entrena el ultimo); archivalo")
                 continue
             texto = _instr(tipo, archivo=t["archivo"], n=n)
+            if ej == "kaggle":                         # P.2.7b: el estado del envio sale de la cola
+                env = t.get("envio")
+                if env and env not in envios:
+                    envios[env] = (_envio(env) or {}).get("estado")
+                texto = KAGGLE.get(envios.get(env) if env else None, KAGGLE[None]).format(envio=env)
             if est == "pendiente":
                 texto = "El zip no llego a Drive: repite el comando que lo creo. " + texto
             it.append(_item(tipo, t["archivo"], "en_espera", texto, n=n, slug=slug, id=t["id"]))
@@ -318,7 +366,7 @@ def externos():
     for tipo in ("asistente", "preetiquetado"):
         k = sum(1 for x in it if x["tipo"] == tipo and x["estado"] == "en_espera")
         if k > 1:
-            out["avisos"].append(f"Hay {k} trabajos de {tipo} en espera: la lanzadora los procesa TODOS; archiva los que no quieras")
+            out["avisos"].append(f"Hay {k} trabajos de {tipo} en espera: el worker los procesa TODOS; archiva los que no quieras")
     return out
 
 

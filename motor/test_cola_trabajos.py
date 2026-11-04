@@ -192,6 +192,31 @@ def test_adoptar_huerfanos():
         assert any("no encuentro" in v for v in C.reconciliar([], {**a, "runs": None, "datasets": None})["avisos"])
 
 
+def test_migracion_1_a_2_conserva_trabajos():
+    with tempfile.TemporaryDirectory() as t:
+        ruta = Path(t) / "v1.sqlite"
+        with closing(sqlite3.connect(ruta)) as c:                    # una base creada por P.1 (esquema 1)
+            c.executescript(C._DDL)
+            c.execute("INSERT INTO trabajos (tipo, estado, archivo, creado, actualizado) VALUES "
+                      "('preetiquetado', 'enviado', 'lote_p1_a.zip', 'x', 'x')")
+            c.execute("PRAGMA user_version = 1")
+            c.commit()
+        with closing(C.abrir(ruta)) as con:
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 2
+            tr = C.buscar(con, "preetiquetado", "lote_p1_a.zip")
+            assert tr["estado"] == "enviado" and tr["envio"] is None and tr["operador"] is None
+            assert [x["archivo"] for x in C.por_enviar(con)] == ["lote_p1_a.zip"]
+            e = C.crear_envio(con, "envio_1", "kaggle", "emi", [tr["id"]])
+            assert e["estado"] == "lanzado" and C.por_enviar(con) == []
+            _falla(C.Conflicto, C.crear_envio, con, "envio_2", "kaggle", "emi", [tr["id"]])   # ya va en un envio
+            _falla(ValueError, C.marcar_envio, con, "envio_1", "raro")
+            _falla(KeyError, C.marcar_envio, con, "no_existe", "corriendo")
+            C.marcar_envio(con, "envio_1", "corriendo")
+            assert C.obtener(con, tr["id"])["estado"] == "en_proceso"
+            assert [x["id"] for x in C.sin_salida(con, "envio_1", "no volvio")] == [tr["id"]]
+            assert C.ultimo_envio(con, "kaggle")["nombre"] == "envio_1" and C.ultimo_envio(con, "colab") is None
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

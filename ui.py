@@ -46,6 +46,8 @@ ACCIONES = {
                         "--backend": ["auto", "pt", "openvino"]}},
     "borrar-proyecto": {"id": "slug", "aplicar": True, "titulo": "Borrar proyecto"},
     "archivar": {"id": "archivo", "aplicar": True, "titulo": "Archivar"},
+    "worker": {"id": None, "aplicar": True, "titulo": "Kaggle",
+               "opciones": {"--enviar": "flag", "--estado": "flag", "--traer": "flag"}},
     "trabajos": {"id": None, "aplicar": True, "titulo": "Cola de trabajos",
                  "opciones": {"--reconciliar": "flag", "--reintentar": "int"}},
 }

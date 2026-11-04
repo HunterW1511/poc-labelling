@@ -209,6 +209,30 @@ def test_tablero_lee_la_cola_sin_escribir():
         assert "boom" in est[("asistente", "error")]["texto"]
 
 
+def test_tablero_en_modo_kaggle():
+    with tempfile.TemporaryDirectory() as t:
+        raiz, _ = _preparar(Path(t))
+        import tablero
+        tablero.PROYECTOS, tablero.MODELOS = raiz / "motor" / "proyectos", raiz / "motor" / "modelos"
+        xd.ENV = {"TRANSPORTE": "kaggle"}
+        x = tablero.externos()
+        assert x["ejecutor"] == "kaggle" and x["items"] == [] and not x["avisos"], x       # sin avisos falsos
+        assert not (raiz / "datos").exists()                                            # el tablero no crea nada
+        esp = xd._transporte().requerir("lotes", crear=True)
+        (esp / "lote_p3_x.zip").write_bytes(b"z")
+        with closing(C.abrir(xd.TRABAJOS_DB)) as con:
+            tr, _ = C.crear(con, "preetiquetado", "lote_p3_x.zip", proyecto=3, estado="enviado")
+        it = tablero.externos()["items"]
+        assert len(it) == 1 and it[0]["texto"].startswith("Listo para Kaggle"), it
+        with closing(C.abrir(xd.TRABAJOS_DB)) as con:
+            C.crear_envio(con, "envio_1", "kaggle", "emi", [tr["id"]])
+            C.marcar_envio(con, "envio_1", "corriendo")
+        x = tablero.externos()
+        assert x["items"][0]["texto"] == "En Kaggle (envio_1): corriendo; 'Traer de Kaggle' cuando termine", x
+        assert x["envio"]["nombre"] == "envio_1" and x["envio"]["estado"] == "corriendo"
+        assert tablero.siguiente({"slug": "s", "n": 3, "spec": True, "lotes": {"en_colab": ["lote_p3_x.zip"]}})["donde"] == "kaggle"
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

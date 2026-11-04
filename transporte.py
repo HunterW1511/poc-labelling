@@ -122,6 +122,11 @@ class Kaggle(Espejo):
         super().__init__(raiz)
         self.env = env
 
+    def carpeta(self, c, crear=False):
+        """Espejo local: siempre hay ruta (una carpeta que aun no existe se lee como vacia); solo se crea al escribir."""
+        super().carpeta(c, crear=crear)
+        return self.raiz / c
+
 
 def elegir(env, raiz):
     """Transporte segun TRANSPORTE del .env (defecto drive)."""

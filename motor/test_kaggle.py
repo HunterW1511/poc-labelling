@@ -1,6 +1,6 @@
 """P.2.6: kaggle_xd.py y xd.py kaggle-pesos con la CLI de Kaggle SIMULADA (sin red ni cuenta). Uso: python test_kaggle.py"""
 import io, json, os, shutil, sys, tempfile
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -175,27 +175,33 @@ def test_integrar_solo_carpetas_de_trabajo():
 
 
 def test_comando_worker():
+    import cola_trabajos as C
     with tempfile.TemporaryDirectory() as t:
         t = Path(t)
         (t / "motor").mkdir()
         shutil.copy2(RAIZ / "motor" / "lanzador.py", t / "motor")
         esp = t / "datos" / "kaggle" / "espejo" / "lotes"
         esp.mkdir(parents=True)
-        (esp / "lote_p3_x.zip").write_bytes(b"zip")
+        for n in ("lote_p3_x.zip", "lote_p3_z.zip", "lote_p3_huerfano.zip"):
+            (esp / n).write_bytes(b"zip")
         (t / "cfg").mkdir()
         (t / "cfg" / "access_token").write_text(TOKEN)
+        db = t / "datos" / "trabajos.sqlite"
+        with closing(C.abrir(db)) as con:
+            x, _ = C.crear(con, "preetiquetado", "lote_p3_x.zip", proyecto=3, estado="enviado")
+            z, _ = C.crear(con, "preetiquetado", "lote_p3_z.zip", proyecto=3, estado="enviado")
         nombres = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida")
-        viejo = (xd.RAIZ, xd.ENV, os.environ.get("KAGGLE_CONFIG_DIR"), {n: getattr(K, n) for n in nombres})
+        viejo = (xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, os.environ.get("KAGGLE_CONFIG_DIR"), {n: getattr(K, n) for n in nombres})
         llamadas, est = [], ["complete"]
         try:
-            xd.RAIZ, xd.ENV = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}, db
             os.environ["KAGGLE_CONFIG_DIR"] = str(t / "cfg")
             K.estado_kernel = lambda k, **kw: (est[0], "")
             K.estado_dataset = lambda ds, **kw: "ready"
             K.subir_envio = lambda c, existe, n, **kw: (llamadas.append(("subir", sorted(p.name for p in Path(c).iterdir()), existe)) or (0, f"ok {TOKEN}"))
             K.esperar_listo = lambda ds, **kw: 5.0
             K.push_kernel = lambda c, limite_s=0, **kw: (llamadas.append(("push", json.loads((Path(c) / "kernel-metadata.json").read_text())["is_private"], limite_s)) or (0, "Kernel version 1 successfully pushed"))
-            def bajar(k, dest, **kw):
+            def bajar(k, dest, **kw):                     # el kernel solo devolvio resultado para x
                 (Path(dest) / "lotes").mkdir(parents=True, exist_ok=True)
                 (Path(dest) / "lotes" / "lote_p3_x_pred.json").write_text("{}")
                 (Path(dest) / "xd-worker.log").write_text(f"log {TOKEN}")
@@ -207,33 +213,52 @@ def test_comando_worker():
                 with redirect_stdout(out):
                     rc = xd.cmd_worker(a)
                 return rc, out.getvalue()
+            def fila(i):
+                with closing(C.abrir(db)) as con:
+                    return C.obtener(con, i)
             rc, out = correr(enviar=True)
             assert rc == 0 and "lote_p3_x.zip" in out and "SOLO REPORTE" in out and not llamadas, out
+            assert "lote_p3_huerfano.zip: esta en el espejo pero no en la cola" in out
             rc, out = correr(enviar=True, aplicar=True, limite=30)
             assert rc == 0 and "OK envio_" in out and TOKEN not in out, out
-            assert llamadas == [("subir", ["dataset-metadata.json", "envio.json", "lote_p3_x.zip.xd"], True), ("push", True, 1800)]
+            assert llamadas == [("subir", ["dataset-metadata.json", "envio.json", "lote_p3_x.zip.xd", "lote_p3_z.zip.xd"], True),
+                                ("push", True, 1800)]
+            assert fila(x["id"])["envio"].startswith("envio_") and fila(x["id"])["operador"] == "emi"
             assert not (t / "datos" / "kaggle" / "envio").exists() and not (t / "datos" / "kaggle" / "kernel").exists()
-            assert "Nada que enviar" in correr(enviar=True)[1]                       # ya enviado: no se repite
-            (esp / "lote_p3_y.zip").write_bytes(b"zip")
+            assert "Nada que enviar" in correr(enviar=True)[1]                       # ya van en un envio
             est[0] = "running"
+            rc, out = correr(estado=True)
+            assert "lanzado -> corriendo" in out and "SOLO REPORTE" in out and fila(x["id"])["estado"] == "enviado", out
+            correr(estado=True, aplicar=True)
+            assert fila(x["id"])["estado"] == "en_proceso" and fila(z["id"])["estado"] == "en_proceso"
+            with closing(C.abrir(db)) as con:
+                C.crear(con, "preetiquetado", "lote_p3_huerfano.zip", proyecto=3, estado="enviado")
             assert "sigue running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=True, estado=False, traer=False, limite=0, aplicar=True)))
             assert "esta running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=False, estado=False, traer=True, limite=0, aplicar=False)))
             est[0] = "complete"
             rc, out = correr(traer=True)
             assert "COPIARIA lotes/lote_p3_x_pred.json" in out and TOKEN not in out and not (esp / "lote_p3_x_pred.json").exists(), out
             rc, out = correr(traer=True, aplicar=True)
-            assert rc == 0 and (esp / "lote_p3_x_pred.json").exists() and not (esp.parent / "xd-worker.log").exists()
+            assert rc == 0 and (esp / "lote_p3_x_pred.json").exists() and not (esp.parent / "xd-worker.log").exists(), out
+            assert fila(x["id"])["estado"] == "listo" and fila(z["id"])["estado"] == "error", out   # z no volvio
+            assert "sin resultado" in fila(z["id"])["error"] and "1 sin resultado" in out
+            with closing(C.abrir(db)) as con:
+                assert C.ultimo_envio(con, "kaggle")["estado"] == "traido"
+                C.mover(con, z["id"], "pendiente")                                   # reintento: sale de su envio
+                C.mover(con, z["id"], "enviado")
+                assert C.obtener(con, z["id"])["envio"] is None
+            rc, out = correr(enviar=True)
+            assert "lote_p3_z.zip" in out and "lote_p3_huerfano.zip" in out, out          # se puede volver a enviar
             xd.ENV = {"KAGGLE_USUARIO": "emi"}
             assert "TRANSPORTE=kaggle" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=True, estado=False, traer=False, limite=0, aplicar=False)))
         finally:
-            xd.RAIZ, xd.ENV, cfg, f = viejo
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, cfg, f = viejo
             for n, v in f.items():
                 setattr(K, n, v)
             if cfg is None:
                 os.environ.pop("KAGGLE_CONFIG_DIR", None)
             else:
                 os.environ["KAGGLE_CONFIG_DIR"] = cfg
-
 
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
