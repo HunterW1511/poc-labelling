@@ -234,7 +234,9 @@ def test_comando_worker():
             with closing(C.abrir(db)) as con:
                 C.crear(con, "preetiquetado", "lote_p3_huerfano.zip", proyecto=3, estado="enviado")
             assert "sigue running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=True, estado=False, traer=False, limite=0, aplicar=True)))
-            assert "esta running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=False, estado=False, traer=True, limite=0, aplicar=False)))
+            rc, out = correr(traer=True, aplicar=True)                              # aun corriendo: aviso, no error
+            assert rc == 0 and "sigue en Kaggle (running" in out and "Nada que traer" in out, out
+            assert fila(x["id"])["estado"] == "en_proceso"
             est[0] = "complete"
             rc, out = correr(traer=True)
             assert "COPIARIA lotes/lote_p3_x_pred.json" in out and TOKEN not in out and not (esp / "lote_p3_x_pred.json").exists(), out

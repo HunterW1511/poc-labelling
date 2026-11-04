@@ -743,8 +743,14 @@ def cmd_worker(a):
         if not ult:
             raise SystemExit("No hay envios a Kaggle en la cola")
         est, msg = K.estado_kernel(kernel)
-        if est not in ("complete", "error"):
-            raise SystemExit(f"El kernel esta {est or 'sin ejecuciones'}: espera a 'complete' (worker --estado)")
+        if est not in ("complete", "error"):             # no es un error: aun no hay nada que traer
+            try:
+                hace = f" hace {(time.time() - time.mktime(time.strptime(ult['creado'], '%Y-%m-%dT%H:%M:%S'))) / 60:.0f} min"
+            except (TypeError, ValueError):
+                hace = ""
+            print(f"El envio {ult['nombre']} sigue en Kaggle ({est or 'sin estado'}; lanzado{hace}). "
+                  "Nada que traer todavia: vuelve a pulsar 'Traer de Kaggle' en unos minutos.")
+            return 0
         sal = _kaggle_dir() / "salida"
         rc, out = K.bajar_salida(kernel, sal)
         if rc:
