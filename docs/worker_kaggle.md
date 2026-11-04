@@ -104,7 +104,15 @@ de una persona a traves del hub, es al menos una zona gris y arriesga la cuenta.
 | Verificacion | `datasets files`: `sam3.pt` 3450062241 bytes (identico), `LICENSE_SAM.txt`, `pesos.json`; status `ready` |
 | Autenticacion | API token en `~/.kaggle/access_token` **sin extension** (un `.txt` no lo detecta la CLI) |
 
-Pendiente para P.2.7: el kernel compara el sha256 de `/kaggle/input/xd-pesos/sam3.pt` con `pesos.json` antes de usarlo.
+| Primer envio real (P.2.7a, asistente de texto; kernel `xd-worker` v2, GPU T4) | subida del envio 12 s, dataset listo +3 s; kernel arranca en ~3 s (sin cola de GPU); pip Whisper 9 s, instalar Ollama 34 s, trabajo 209 s (descarga de qwen2.5:14b ~80 s + LLM 127 s); **total 252 s**. Colab T4 con el mismo trabajo: LLM 190 s |
+| Imagen de Kaggle (03/11/2026) | Python 3.13.16, torch 2.11.0+cu130, CUDA 13.0, Tesla T4 |
+| Rutas | Los datasets se montan en `/kaggle/input/datasets/<usuario>/<slug>/` (el lanzador busca con `rglob`) |
+| **Leccion** | **Kaggle descomprime los `.zip` subidos a un dataset** (primer envio fallo: el zip no estaba). Los trabajos viajan como `<zip>.xd` y el lanzador acepta tambien una carpeta ya descomprimida |
+| Estado del kernel | La CLI imprime `has status "KernelWorkerStatus.X"` (QUEUED, RUNNING, COMPLETE, ERROR, CANCEL_*); un script que falla por trabajo termina COMPLETE con su `_error.txt` |
+| `dataset_sources` | La CLI 2.2.5 lo traduce a `dataset_data_sources` (el issue 633 no aplica) |
+
+El kernel verifica el sha256 de `sam3.pt` contra `pesos.json` antes de usarlo (solo si hay trabajos que usan SAM 3).
+Siguiente medicion: un lote de pre-etiquetado (instalar vision + verificar pesos + SAM 3), en P.2.8.
 Visto una vez durante la subida: un `datos/kaggle/sam3.pt` transitorio (sin enlace con el original; desaparecio solo).
 
 ## 5. Fuentes (consultadas el 03/11/2026)
