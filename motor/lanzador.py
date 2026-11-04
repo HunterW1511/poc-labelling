@@ -66,14 +66,21 @@ def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None,
     cache = {} if cache is None else cache
     listos, estados = {}, []
     for t in envio["trabajos"]:
-        zp = zips / t["archivo"]
-        stem, carpeta = zp.stem, salida / CARPETA.get(t["tipo"], "otros")
+        stem, carpeta = Path(t["archivo"]).stem, salida / CARPETA.get(t["tipo"], "otros")
         carpeta.mkdir(parents=True, exist_ok=True)
         d = tmp / stem
         shutil.rmtree(d, ignore_errors=True)
         try:
-            with zipfile.ZipFile(zp) as z:
-                z.extractall(d)
+            zp = zips / t.get("en_envio", t["archivo"])      # <zip>.xd: Kaggle descomprime los .zip de un dataset
+            ya = next((c for c in (zips / t["archivo"], zips / stem) if c.is_dir()), None)
+            if zp.is_file():
+                with zipfile.ZipFile(zp) as z:
+                    z.extractall(d)
+            elif ya is not None:                             # por si Kaggle lo descomprimio igual
+                shutil.copytree(ya, d)
+            else:
+                hay = sorted(p.name for p in zips.iterdir())[:30]
+                raise FileNotFoundError(f"no esta {zp.name} en {zips}; hay: {hay}")
             if not (d / "codigo" / "worker.py").is_file():
                 raise RuntimeError("zip sin codigo/worker.py (exportado antes de P.2.3): vuelve a exportarlo")
         except Exception as e:

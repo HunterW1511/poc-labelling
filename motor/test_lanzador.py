@@ -95,6 +95,19 @@ def test_envio_completo():
         assert not [f for f in salida.rglob("*") if f.suffix in (".jpg", ".png", ".zip")]   # nada de fotos en la salida
         res = json.loads((salida / "envio_resultado.json").read_text())
         assert res["envio"] == "envio_x" and len(res["estados"]) == 4
+        # P.2.7a real: Kaggle descomprime los .zip. Viajan como .zip.xd; si aun asi llega una carpeta, se usa
+        xd_ = _zip(zips / "lote_p5_b.zip", "preetiquetado", {"codigo/lote.py": LOTE, "manifiesto.json": '{"modo": "sam3"}'})
+        (zips / "lote_p5_b.zip").rename(zips / "lote_p5_b.zip.xd")
+        xd_["en_envio"] = "lote_p5_b.zip.xd"
+        _zip(zips / "lote_p6_c.zip", "preetiquetado", {"codigo/lote.py": LOTE, "manifiesto.json": '{"modo": "sam3"}'})
+        with zipfile.ZipFile(zips / "lote_p6_c.zip") as z:
+            z.extractall(zips / "lote_p6_c")
+        (zips / "lote_p6_c.zip").unlink()
+        falta = {"tipo": "preetiquetado", "archivo": "lote_p7_d.zip", "en_envio": "lote_p7_d.zip.xd"}
+        e2 = L.ejecutar({"envio": "z", "trabajos": [xd_, {"tipo": "preetiquetado", "archivo": "lote_p6_c.zip"}, falta]},
+                        zips, t / "w3", tmp, sh=lambda c: None)
+        assert [e["ok"] for e in e2] == [False, True, True], e2
+        assert "no esta lote_p7_d.zip.xd" in e2[0]["error"] and "lote_p5_b.zip.xd" in e2[0]["error"]   # lista lo que hay
         comandos.clear()                                                            # solo asistente: no instala vision
         L.ejecutar({"envio": "y", "trabajos": trabajos[:1]}, zips, t / "w2", tmp, sh=comandos.append)
         assert L.VISION not in comandos

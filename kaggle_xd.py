@@ -131,6 +131,7 @@ SLUG_ENVIOS, TITULO_ENVIOS = "xd-envios", "xd-envios trabajos"
 SLUG_KERNEL = "xd-worker"                       # el titulo debe "slugificar" al slug: se usa el mismo
 ACTIVOS = ("queued", "running", "new_script", "cancel_requested")
 TIPO_DE_CARPETA = {"asistente": "asistente", "lotes": "preetiquetado", "datasets": "entrenamiento"}
+EXT_ENVIO = ".xd"     # Kaggle DESCOMPRIME los .zip de un dataset (visto en P.2.7a): viajan como <zip>.xd
 CARPETAS_SALIDA = ("asistente", "lotes", "datasets", "runs")
 
 
@@ -153,8 +154,9 @@ def armar_envio(zips, destino, usuario_, nombre, operador):
         zp = Path(zp)
         if carpeta not in TIPO_DE_CARPETA:
             raise ValueError(f"carpeta {carpeta!r} sin tipo de trabajo")
-        _enlazar(zp, destino / zp.name)
-        trabajos.append({"tipo": TIPO_DE_CARPETA[carpeta], "archivo": zp.name, "bytes": zp.stat().st_size})
+        _enlazar(zp, destino / (zp.name + EXT_ENVIO))
+        trabajos.append({"tipo": TIPO_DE_CARPETA[carpeta], "archivo": zp.name, "en_envio": zp.name + EXT_ENVIO,
+                         "bytes": zp.stat().st_size})
     if not trabajos:
         raise ValueError("envio vacio")
     envio = {"esquema": 1, "envio": nombre, "operador": operador, "creado": time.strftime("%Y-%m-%dT%H:%M:%S%z"),

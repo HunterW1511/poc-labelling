@@ -142,8 +142,9 @@ def test_envio_kernel_y_estado():
         e = K.armar_envio([("lotes", t / "lote_p3_x.zip"), ("asistente", t / "asist_s_1.zip")], t / "env", "emi", "envio_1", "emi")
         assert [x["tipo"] for x in e["trabajos"]] == ["preetiquetado", "asistente"]
         assert json.loads((t / "env" / "dataset-metadata.json").read_text())["id"] == "emi/xd-envios"
-        assert sorted(f.name for f in (t / "env").iterdir()) == ["asist_s_1.zip", "dataset-metadata.json", "envio.json",
-                                                                  "lote_p3_x.zip"]
+        assert sorted(f.name for f in (t / "env").iterdir()) == ["asist_s_1.zip.xd", "dataset-metadata.json", "envio.json",
+                                                                  "lote_p3_x.zip.xd"]                # Kaggle descomprime los .zip
+        assert e["trabajos"][0]["archivo"] == "lote_p3_x.zip" and e["trabajos"][0]["en_envio"] == "lote_p3_x.zip.xd"
         _falla(ValueError, K.armar_envio, [], t / "env2", "emi", "e", "emi")
         m = K.kernel_metadata("emi")
         assert m["is_private"] is True and m["enable_gpu"] is True and m["title"] == "xd-worker"
@@ -210,7 +211,7 @@ def test_comando_worker():
             assert rc == 0 and "lote_p3_x.zip" in out and "SOLO REPORTE" in out and not llamadas, out
             rc, out = correr(enviar=True, aplicar=True, limite=30)
             assert rc == 0 and "OK envio_" in out and TOKEN not in out, out
-            assert llamadas == [("subir", ["dataset-metadata.json", "envio.json", "lote_p3_x.zip"], True), ("push", True, 1800)]
+            assert llamadas == [("subir", ["dataset-metadata.json", "envio.json", "lote_p3_x.zip.xd"], True), ("push", True, 1800)]
             assert not (t / "datos" / "kaggle" / "envio").exists() and not (t / "datos" / "kaggle" / "kernel").exists()
             assert "Nada que enviar" in correr(enviar=True)[1]                       # ya enviado: no se repite
             (esp / "lote_p3_y.zip").write_bytes(b"zip")
