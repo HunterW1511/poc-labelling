@@ -141,3 +141,23 @@ llega un envio) queda para P.5 (encadenamiento).
 - `importar_lote.py`: ya importa un `_pred.json` a la vez; se llama una vez por trozo.
 - `cache_sam3.py` y `cache-importar`: igual, uno por trozo.
 - Estados de la cola: sin cambios. El campo `grupo` es solo informativo.
+
+## Revision P.4.R1 (Claude Code, 05/11/2026): lo que hace el codigo
+
+La version de P.4.3 lanzaba los envios t01 y t02 seguidos sobre el **mismo kernel** y el **mismo dataset** (`-d`
+borraba la version que leia el primero) y `--traer` solo bajaba la ultima version del kernel: el trozo 1 nunca llegaba
+antes. Ademas el trozo 1 del lote y el de la precodificacion eran fotos distintas. Corregido:
+
+- **Un envio por llamada** (`xd.py worker --enviar`): toma el **trozo mas bajo pendiente** de todos los grupos (los
+  trabajos sin trozo cuentan como trozo 1). Los trozos posteriores esperan; mientras un envio corre no sale otro
+  (el kernel es uno solo).
+- **Cada envio guarda su version del kernel** (cola esquema 4, `envios.version`, leida de "Kernel version N
+  successfully pushed"). `--estado` y `--traer` recorren los envios pendientes y consultan/bajan **su** version
+  (`<usuario>/xd-worker/<N>`): el trozo 1 se trae aunque el trozo 2 ya corra.
+- **Trozos alineados**: `preetiquetar --aplicar` precodifica las **mismas tareas, en el mismo orden y con el mismo
+  `--trozo`** (`exportar_pre.py --tareas`); el trozo 1 viaja con su pre-etiquetado y su cache en el mismo envio.
+  `--sin-precodificar` lo desactiva.
+- Flujo: `preetiquetar N --muestra 100 --aplicar` -> `worker --enviar --aplicar` (trozo 1) -> `worker --traer
+  --aplicar` + `lote-importar` + `cache-importar` (revisar) -> `worker --enviar --aplicar` (trozo 2) -> ...
+  P.5.R1 (daemon) encadena estos pasos.
+- Tests: `test_kaggle.test_envios_escalonados_por_trozo` y `test_xd_trabajos.test_preetiquetar_precodifica_las_mismas_tareas`.

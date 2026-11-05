@@ -203,6 +203,15 @@ def push_kernel(carpeta, limite_s=0, acelerador="NvidiaTeslaT4", correr=subproce
     return cli(*args, correr=correr, timeout=600)
 
 
+VERSION_PUSH = re.compile(r"Kernel version (\d+) successfully")
+
+
+def version_push(salida):
+    """'Kernel version 6 successfully pushed.' -> 6 (None si la CLI no la dice)."""
+    m = VERSION_PUSH.search(salida or "")
+    return int(m.group(1)) if m else None
+
+
 ESTADO = re.compile(r'has status "(?:\w+\.)?(\w+)"')
 FALLO = re.compile(r'Failure message: "(.*)"', re.S)
 

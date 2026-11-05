@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--todas", action="store_true", help="incluir fotos que ya tienen cache")
     ap.add_argument("--limite", type=int, default=0, help="maximo de fotos (0 = sin limite)")
     ap.add_argument("--trozo", type=int, default=0, help="P.4: si >0 y hay mas fotos, genera 2 zips (t01 + t02)")
+    ap.add_argument("--tareas", default="", help="P.4.R1: solo estos ids, en este orden (los mismos trozos que el lote)")
     ap.add_argument("--reporte", action="store_true", help="no crear el zip; solo contar")
     a = ap.parse_args()
 
@@ -37,8 +38,13 @@ def main():
     r = requests.get(f"{LS_URL}/api/projects/{a.proyecto}/export", headers=HEADERS, timeout=600,
                      params={"exportType": "JSON", "download_all_tasks": "true"})
     r.raise_for_status()
+    tareas = r.json()
+    if a.tareas:                                   # P.4.R1: mismas tareas y mismo orden que el lote de pre-etiquetado
+        orden = [int(x) for x in a.tareas.split(",") if x.strip()]
+        por_id = {t["id"]: t for t in tareas}
+        tareas = [por_id[i] for i in orden if i in por_id]
     faltan, ya = [], 0
-    for t in r.json():
+    for t in tareas:
         ruta = Path(get_local_path(t["data"][campo], task_id=t["id"]))
         sha = CS.sha256_archivo(ruta)
         if not a.todas and CS.archivo(CACHE_SAM3, CS.clave(sha, imgsz, sha_m, ver)).is_file():

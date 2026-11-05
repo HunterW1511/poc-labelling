@@ -238,7 +238,7 @@ def test_comando_worker():
                 C.crear(con, "preetiquetado", "lote_p3_huerfano.zip", proyecto=3, estado="enviado")
             assert "sigue running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=True, estado=False, traer=False, limite=0, aplicar=True)))
             rc, out = correr(traer=True, aplicar=True)                              # aun corriendo: aviso, no error
-            assert rc == 0 and "sigue en Kaggle (running" in out and "Nada que traer" in out, out
+            assert rc == 0 and "sigue en Kaggle (running" in out and "nada que traer" in out, out
             assert fila(x["id"])["estado"] == "en_proceso"
             est[0] = "complete"
             rc, out = correr(traer=True)
@@ -264,6 +264,89 @@ def test_comando_worker():
                 os.environ.pop("KAGGLE_CONFIG_DIR", None)
             else:
                 os.environ["KAGGLE_CONFIG_DIR"] = cfg
+
+def test_envios_escalonados_por_trozo():
+    """P.4.R1: un envio por llamada con el trozo mas bajo; el siguiente cuando el kernel anterior termina;
+    --traer baja cada envio por SU version del kernel."""
+    import cola_trabajos as C
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        (t / "motor").mkdir()
+        shutil.copy2(RAIZ / "motor" / "lanzador.py", t / "motor")
+        esp = t / "datos" / "kaggle" / "espejo"
+        nombres = {"lotes": ["lote_p3_x_t01.zip", "lote_p3_x_t02.zip", "pre_p3_y_t01.zip", "pre_p3_y_t02.zip"],
+                   "asistente": ["asist_s_20261105-100000.zip"]}
+        for c, ns in nombres.items():
+            (esp / c).mkdir(parents=True)
+            for n in ns:
+                (esp / c / n).write_bytes(b"zip")
+        (t / "cfg").mkdir()
+        (t / "cfg" / "access_token").write_text(TOKEN)
+        db = t / "datos" / "trabajos.sqlite"
+        with closing(C.abrir(db)) as con:
+            for n in nombres["lotes"]:
+                C.crear(con, "precodificacion" if n.startswith("pre_") else "preetiquetado", n, proyecto=3, estado="enviado",
+                        grupo=n[:-8])
+            C.crear(con, "asistente", nombres["asistente"][0], slug="s", estado="enviado")
+        ks = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida")
+        viejo = (xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, os.environ.get("KAGGLE_CONFIG_DIR"), {n: getattr(K, n) for n in ks})
+        estado, subidos, bajados, version = {}, [], [], [0]
+        try:
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}, db
+            os.environ["KAGGLE_CONFIG_DIR"] = str(t / "cfg")
+            K.estado_kernel = lambda k, **kw: (estado.get(k), "")
+            K.estado_dataset = lambda ds, **kw: "ready"
+            K.subir_envio = lambda c, existe, n, **kw: (subidos.append(sorted(p.name for p in Path(c).iterdir() if p.suffix == ".xd")) or (0, ""))
+            K.esperar_listo = lambda ds, **kw: 1.0
+            def push(c, limite_s=0, **kw):
+                version[0] += 1
+                return 0, f"Kernel version {version[0]} successfully pushed.  Please check progress at https://x"
+            K.push_kernel = push
+            def bajar(k, dest, **kw):
+                bajados.append(k)
+                (Path(dest) / "lotes").mkdir(parents=True, exist_ok=True)
+                for n in (["lote_p3_x_t01", "pre_p3_y_t01"] if k.endswith("/1") else ["lote_p3_x_t02", "pre_p3_y_t02"]):
+                    (Path(dest) / "lotes" / (f"{n}_pred.json" if n.startswith("lote") else f"{n}_cache.json")).write_text("{}")
+                return 0, ""
+            K.bajar_salida = bajar
+            def correr(**kw):
+                a = NS(**{"enviar": False, "estado": False, "traer": False, "limite": 0, "aplicar": False, **kw})
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    rc = xd.cmd_worker(a)
+                return rc, out.getvalue()
+            rc, out = correr(enviar=True, aplicar=True)
+            assert rc == 0 and "trozo 1" in out and "kernel v1" in out and "Quedan 2" in out, out
+            assert subidos[0] == ["asist_s_20261105-100000.zip.xd", "lote_p3_x_t01.zip.xd", "pre_p3_y_t01.zip.xd"]
+            estado["emi/xd-worker/1"] = "running"
+            assert "sigue running" in str(_falla(SystemExit, xd.cmd_worker, NS(enviar=True, estado=False, traer=False, limite=0, aplicar=True)))
+            estado["emi/xd-worker/1"] = "complete"                                      # termina el 1: sale el trozo 2
+            rc, out = correr(enviar=True, aplicar=True)
+            assert rc == 0 and "trozo 2" in out and "kernel v2" in out and subidos[1] == ["lote_p3_x_t02.zip.xd", "pre_p3_y_t02.zip.xd"], out
+            estado["emi/xd-worker/2"] = "running"
+            rc, out = correr(traer=True, aplicar=True)                                  # el 1 se trae aunque el 2 corra
+            assert bajados == ["emi/xd-worker/1"] and "sigue en Kaggle (running" in out, out
+            with closing(C.abrir(db)) as con:
+                est = {x["archivo"]: x["estado"] for x in C.listar(con)}
+                assert est["lote_p3_x_t01.zip"] == "listo" and est["pre_p3_y_t01.zip"] == "listo"
+                assert est["lote_p3_x_t02.zip"] == "enviado" and est["asist_s_20261105-100000.zip"] == "error"   # no volvio
+                assert [e["version"] for e in C.envios_pendientes(con, "kaggle")] == [2]
+            estado["emi/xd-worker/2"] = "complete"
+            rc, out = correr(traer=True, aplicar=True)
+            assert bajados == ["emi/xd-worker/1", "emi/xd-worker/2"], bajados
+            with closing(C.abrir(db)) as con:
+                assert {x["archivo"]: x["estado"] for x in C.listar(con)}["pre_p3_y_t02.zip"] == "listo"
+                assert C.envios_pendientes(con, "kaggle") == []
+            assert K.version_push("Kernel version 12 successfully pushed.") == 12 and K.version_push("otra cosa") is None
+        finally:
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, cfg, f = viejo
+            for n, v in f.items():
+                setattr(K, n, v)
+            if cfg is None:
+                os.environ.pop("KAGGLE_CONFIG_DIR", None)
+            else:
+                os.environ["KAGGLE_CONFIG_DIR"] = cfg
+
 
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):

@@ -169,13 +169,30 @@ def cmd_lote_exportar(a):
     zips = [LOTES_LOCAL / PurePosixPath(m.group(1)).name for m in re.finditer(r"-> (\S+\.zip)", out)]
     if not zips:
         raise SystemExit("No encontre rutas de zip en la salida de exportar_lote.py")
+    ids = []
     for zp in zips:
         grupo = _extraer_grupo(zp, "manifiesto.json")
+        ids += _ids_lote(zp)
         _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto, grupo=grupo)
         print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
         _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
+    if getattr(a, "precodificar", False) and ids:   # P.4.R1: mismas tareas, mismos trozos: el trozo 1 llega con su cache
+        print(f"Precodificando las mismas {len(ids)} tareas (trozo {getattr(a, 'trozo', 0) or 'unico'}) para el clic liviano")
+        rc = _precodificar(a.proyecto, T, trozo=getattr(a, "trozo", 0), tareas=ids)
+        if rc not in (0, 3):
+            print(f"AVISO: la precodificacion salio con rc {rc}; el clic no respondera en esas fotos hasta precodificarlas")
     print(_siguiente_externo(T, "python xd.py lote-importar"))
     return 0
+
+
+def _ids_lote(zp):
+    """ids de tarea del manifiesto de un lote, en su orden."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(zp) as z:
+            return [t["id"] for t in json.loads(z.read("manifiesto.json"))["tareas"]]
+    except Exception:
+        return []
 
 
 def _prioridad(valor, proyecto):
@@ -237,25 +254,38 @@ def cmd_precodificar(a):
     """P.3.3: fotos del proyecto sin cache de SAM 3 -> trabajo de precodificacion para el worker (GPU)."""
     T = _transporte()
     T.requerir("lotes")
-    args = [a.proyecto] + (["--todas"] if a.todas else []) + (["--limite", a.limite] if a.limite else []) + \
-           ["--trozo", a.trozo]
     if not a.aplicar:
+        args = [a.proyecto] + (["--todas"] if a.todas else []) + (["--limite", a.limite] if a.limite else []) + \
+               ["--trozo", a.trozo]
         rc = en_motor("exportar_pre.py", *args, "--reporte")[0]
         if rc == 0:
             print("Modo reporte. Para generar el trabajo y enviarlo al worker agrega --aplicar")
         return rc
+    rc = _precodificar(a.proyecto, T, trozo=a.trozo, todas=a.todas, limite=a.limite)
+    if rc == 0:
+        print(_siguiente_externo(T, "python xd.py cache-importar --aplicar"))
+    return 0 if rc == 3 else rc
+
+
+def _precodificar(proyecto, T, trozo=0, todas=False, limite=0, tareas=()):
+    """Exporta la precodificacion (opcionalmente de tareas dadas, en su orden) y la deja en la cola.
+    -> 0 ok | 3 nada que precodificar (todas con cache) | otro rc de exportar_pre.py"""
+    args = [proyecto] + (["--todas"] if todas else []) + (["--limite", limite] if limite else []) + ["--trozo", trozo] + \
+           (["--tareas", ",".join(str(i) for i in tareas)] if tareas else [])
     rc, out = en_motor("exportar_pre.py", *args)
     if rc:
+        if "ya tienen cache" in out:
+            print("Todas esas fotos ya tienen cache: nada que precodificar")
+            return 3
         return rc
     zips = [LOTES_LOCAL / PurePosixPath(m.group(1)).name for m in re.finditer(r"-> (\S+\.zip)", out)]
     if not zips:
         raise SystemExit("No encontre rutas de zip en la salida de exportar_pre.py")
     for zp in zips:
         grupo = _extraer_grupo(zp, "trabajo.json")
-        _en_cola(zp.name, _q_crear, "precodificacion", zp.name, "pendiente", proyecto=a.proyecto, grupo=grupo)
+        _en_cola(zp.name, _q_crear, "precodificacion", zp.name, "pendiente", proyecto=proyecto, grupo=grupo)
         print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
         _en_cola(zp.name, _q_enviado, "precodificacion", zp.name)
-    print(_siguiente_externo(T, "python xd.py cache-importar --aplicar"))
     return 0
 
 
@@ -742,9 +772,16 @@ def _leer_error(c):
     return leer
 
 
+def _trozo(nombre):
+    """Numero de trozo de un zip de trabajo (..._t02.zip -> 2); sin trozo cuenta como 1 (va en el primer envio)."""
+    m = re.search(r"_t(\d{2})\.zip$", nombre)
+    return int(m.group(1)) if m else 1
+
+
 def cmd_worker(a):
     """Envia a Kaggle los trabajos en espera, consulta el kernel y trae su salida. Todo con reporte primero.
-    El estado vive en la cola (esquema 2: tabla envios); Kaggle solo transporta."""
+    P.4.R1: un envio por llamada con el trozo mas bajo pendiente (el kernel es uno solo: el siguiente trozo sale cuando
+    el anterior termina); --estado y --traer recorren los envios pendientes por version del kernel."""
     import kaggle_xd as K
     import transporte
     T = _transporte()
@@ -759,24 +796,31 @@ def cmd_worker(a):
         raise SystemExit("Sin credencial de Kaggle: guarda tu API token en ~/.kaggle/access_token")
     C = _cola_mod()
     con = _cola(crear=a.aplicar)
+
+    def kv(e):                                     # el kernel de ESE envio (por version) o el ultimo si no la sabemos
+        return f"{kernel}/{e['version']}" if e.get("version") else kernel
     try:
-        ult = C.ultimo_envio(con, "kaggle") if con else None
+        pend = C.envios_pendientes(con, "kaggle") if con else []
         if a.estado:
-            est, msg = K.estado_kernel(kernel)
-            print(f"kernel {kernel}: {est or 'sin ejecuciones o sin acceso'}" + (f" | {msg}" if msg else ""))
-            if not ult:
-                print("Sin envios registrados en la cola")
+            if not pend:
+                est, msg = K.estado_kernel(kernel)
+                print(f"kernel {kernel}: {est or 'sin ejecuciones o sin acceso'}" + (f" | {msg}" if msg else ""))
+                print("Sin envios pendientes en la cola")
                 return 0
-            n = len(C.trabajos_de(con, ult["nombre"]))
-            print(f"ultimo envio {ult['nombre']}: {ult['estado']} | {n} trabajo(s) | lanzado {ult['creado']}")
-            nuevo = ENVIO_DE_KERNEL.get(est or "")
-            if ult["estado"] in ("lanzado", "corriendo") and nuevo and nuevo != ult["estado"]:
-                print(f"  envio {ult['estado']} -> {nuevo}" + ("  (sus trabajos -> en_proceso)" if nuevo == "corriendo" else ""))
-                if a.aplicar:
-                    C.marcar_envio(con, ult["nombre"], nuevo, msg or None)
-                    print("OK cola al dia")
-                else:
-                    print("SOLO REPORTE: --aplicar lo anota en la cola")
+            cambios = 0
+            for e in pend:
+                est, msg = K.estado_kernel(kv(e))
+                n = len(C.trabajos_de(con, e["nombre"]))
+                print(f"envio {e['nombre']} (kernel v{e.get('version') or '?'}): {e['estado']} | Kaggle {est or '?'} | "
+                      f"{n} trabajo(s) | lanzado {e['creado']}" + (f" | {msg}" if msg else ""))
+                nuevo = ENVIO_DE_KERNEL.get(est or "")
+                if e["estado"] in ("lanzado", "corriendo") and nuevo and nuevo != e["estado"]:
+                    cambios += 1
+                    print(f"  envio {e['estado']} -> {nuevo}" + ("  (sus trabajos -> en_proceso)" if nuevo == "corriendo" else ""))
+                    if a.aplicar:
+                        C.marcar_envio(con, e["nombre"], nuevo, msg or None)
+            if cambios:
+                print("OK cola al dia" if a.aplicar else "SOLO REPORTE: --aplicar lo anota en la cola")
             return 0
         if a.enviar:
             filas, avisos = [], []
@@ -793,118 +837,113 @@ def cmd_worker(a):
                     if f.name not in en_cola:
                         avisos.append(f"{f.name}: esta en el espejo pero no en la cola (python xd.py trabajos --reconciliar --aplicar)")
             print(f"kernel {kernel} (PRIVADO, GPU T4) | operador {u} | credencial {cred}")
-            for t, c, f in filas:
-                ginfo = f" | grupo {t['grupo']}" if t.get('grupo') else ""
-                print(f"  {t['id']:>4} {t['tipo']:<16}{f.name}  ({f.stat().st_size / 1e6:.1f} MB){ginfo}")
             for v in avisos:
                 print(f"AVISO: {v}")
             if not filas:
                 print("Nada que enviar")
                 return 0
-            if ult and ult["estado"] in ("lanzado", "corriendo"):
-                est, _ = K.estado_kernel(kernel)
-                if est in K.ACTIVOS:
-                    raise SystemExit(f"El envio {ult['nombre']} sigue {est}: espera a que termine antes de otro")
+            for e in pend:                             # el kernel es uno solo: nada nuevo mientras corre otro envio
+                if e["estado"] in ("lanzado", "corriendo"):
+                    est, _ = K.estado_kernel(kv(e))
+                    if est in K.ACTIVOS:
+                        raise SystemExit(f"El envio {e['nombre']} sigue {est}: el kernel es uno solo; el siguiente sale "
+                                         "cuando termine (worker --estado)")
+            nivel = min(_trozo(f.name) for _, _, f in filas)
+            ahora = [x for x in filas if _trozo(x[2].name) == nivel]
+            despues = [x for x in filas if _trozo(x[2].name) != nivel]
+            print(f"Este envio (trozo {nivel}): {len(ahora)} trabajo(s)")
+            for t, c, f in ahora:
+                g = f" | grupo {t['grupo']}" if t.get("grupo") else ""
+                print(f"  {t['id']:>4} {t['tipo']:<16}{f.name}  ({f.stat().st_size / 1e6:.1f} MB){g}")
+            if despues:
+                print(f"Esperan al siguiente envio: {len(despues)} trabajo(s) de trozos posteriores")
             if not a.aplicar:
-                print(f"SOLO REPORTE: {len(filas)} trabajo(s); --aplicar sube el envio (dataset privado "
-                      f"{u}/{K.SLUG_ENVIOS}, borra sus versiones viejas) y lanza el kernel")
+                print(f"SOLO REPORTE: --aplicar sube este envio (dataset privado {u}/{K.SLUG_ENVIOS}, borra sus versiones "
+                      "viejas) y lanza el kernel")
                 return 0
-            # P.4.3: separar trabajos por trozo si tienen grupo
-            grupos = {}
-            for t, c, f in filas:
-                g = t.get("grupo")
-                if g:
-                    grupos.setdefault(g, {"t01": [], "t02": [], "sin": []})
-                    if "_t01.zip" in f.name:
-                        grupos[g]["t01"].append((t, c, f))
-                    elif "_t02.zip" in f.name:
-                        grupos[g]["t02"].append((t, c, f))
-                    else:
-                        grupos[g]["sin"].append((t, c, f))
-                else:
-                    grupos.setdefault(None, {"sin": []})
-                    grupos[None]["sin"].append((t, c, f))
-            envios_a_lanzar = []
-            for g, ts in grupos.items():
-                if g and ts["t01"]:
-                    envios_a_lanzar.append(("t01", ts["t01"]))
-                    if ts["t02"]:
-                        envios_a_lanzar.append(("t02", ts["t02"]))
-                    if ts["sin"]:
-                        envios_a_lanzar.append(("sin", ts["sin"]))
-                else:
-                    envios_a_lanzar.append(("unico", ts["sin"]))
-            if len(envios_a_lanzar) > 1:
-                print(f"P.4: {len(envios_a_lanzar)} envios escalonados (trozo 1 primero, luego el resto)")
-            for idx, (etiqueta, trabajos) in enumerate(envios_a_lanzar, 1):
-                nombre = f"envio_{time.strftime('%Y%m%d-%H%M%S')}" + (f"_{etiqueta}" if len(envios_a_lanzar) > 1 else "")
-                carpeta, kcarp = _kaggle_dir() / "envio", _kaggle_dir() / "kernel"
-                print(f"\nEnvio {idx}/{len(envios_a_lanzar)}: {nombre} ({len(trabajos)} trabajo(s))")
-                try:
-                    K.armar_envio([(c, f) for _, c, f in trabajos], carpeta, u, nombre, u)
-                    ds = f"{u}/{K.SLUG_ENVIOS}"
-                    t0 = time.time()
-                    rc, out = K.subir_envio(carpeta, bool(K.estado_dataset(ds)), nombre)
-                    print(K.ocultar(out)[-1500:])
-                    if rc:
-                        raise SystemExit(f"no se pudo subir el envio {nombre} (rc {rc}); nada cambio en la cola")
-                    subida = round(time.time() - t0, 1)
-                    listo = K.esperar_listo(ds)
-                    if listo is None:
-                        raise SystemExit(f"{ds} no quedo listo tras {nombre}; reintenta worker --enviar mas tarde (nada cambio en la cola)")
-                    K.armar_kernel(RAIZ / "motor" / "lanzador.py", kcarp, u)
-                    rc, out = K.push_kernel(kcarp, limite_s=a.limite * 60)
-                    print(K.ocultar(out)[-1500:])
-                    if rc:
-                        raise SystemExit(f"no se pudo lanzar el kernel {nombre} (rc {rc}); nada cambio en la cola")
-                finally:
-                    shutil.rmtree(carpeta, ignore_errors=True)
-                    shutil.rmtree(kcarp, ignore_errors=True)
-                C.crear_envio(con, nombre, "kaggle", u, [t["id"] for t, _, _ in trabajos])
-                C.marcar_envio(con, nombre, "lanzado", f"subida {subida} s; dataset listo tras {listo} s")
-                print(f"OK {nombre}: subida {subida} s | dataset listo tras {listo} s | kernel lanzado")
-            print("Siguiente:  python xd.py worker --estado  (hasta 'complete')  y luego  python xd.py worker --traer --aplicar")
-            return 0
-        # --traer
-        if not ult:
-            raise SystemExit("No hay envios a Kaggle en la cola")
-        est, msg = K.estado_kernel(kernel)
-        if est not in ("complete", "error"):             # no es un error: aun no hay nada que traer
+            nombre = f"envio_{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"   # unico (daemon)
+            carpeta, kcarp = _kaggle_dir() / "envio", _kaggle_dir() / "kernel"
             try:
-                hace = f" hace {(time.time() - time.mktime(time.strptime(ult['creado'], '%Y-%m-%dT%H:%M:%S'))) / 60:.0f} min"
-            except (TypeError, ValueError):
-                hace = ""
-            print(f"El envio {ult['nombre']} sigue en Kaggle ({est or 'sin estado'}; lanzado{hace}). "
-                  "Nada que traer todavia: vuelve a pulsar 'Traer de Kaggle' en unos minutos.")
+                K.armar_envio([(c, f) for _, c, f in ahora], carpeta, u, nombre, u)
+                ds = f"{u}/{K.SLUG_ENVIOS}"
+                t0 = time.time()
+                rc, out = K.subir_envio(carpeta, bool(K.estado_dataset(ds)), nombre)
+                print(K.ocultar(out)[-1500:])
+                if rc:
+                    raise SystemExit(f"no se pudo subir el envio (rc {rc}); nada cambio en la cola")
+                subida = round(time.time() - t0, 1)
+                listo = K.esperar_listo(ds)
+                if listo is None:
+                    raise SystemExit(f"{ds} no quedo listo; reintenta worker --enviar mas tarde (nada cambio en la cola)")
+                K.armar_kernel(RAIZ / "motor" / "lanzador.py", kcarp, u)
+                rc, out = K.push_kernel(kcarp, limite_s=a.limite * 60)
+                print(K.ocultar(out)[-1500:])
+                if rc:
+                    raise SystemExit(f"no se pudo lanzar el kernel (rc {rc}); nada cambio en la cola")
+            finally:
+                shutil.rmtree(carpeta, ignore_errors=True)
+                shutil.rmtree(kcarp, ignore_errors=True)
+            version = K.version_push(out)
+            C.crear_envio(con, nombre, "kaggle", u, [t["id"] for t, _, _ in ahora], version=version)
+            C.marcar_envio(con, nombre, "lanzado", f"trozo {nivel}; subida {subida} s; dataset listo tras {listo} s")
+            print(f"OK {nombre} (kernel v{version or '?'}, trozo {nivel}): subida {subida} s | dataset listo tras {listo} s")
+            if despues:
+                print(f"Quedan {len(despues)} trabajo(s) del trozo siguiente: cuando este envio termine, "
+                      "worker --enviar --aplicar (o el daemon) lo lanza")
+            print("Siguiente:  python xd.py worker --estado  y, cuando termine,  python xd.py worker --traer --aplicar")
             return 0
-        sal = _kaggle_dir() / "salida"
-        rc, out = K.bajar_salida(kernel, sal)
-        if rc:
-            raise SystemExit(f"no se pudo bajar la salida (rc {rc}): {out[-300:]}")
-        for f in sorted(sal.glob("*.log")):
-            print(f"--- {f.name} (final)\n" + K.ocultar(f.read_text(encoding="utf-8", errors="replace"))[-1500:])
-        if est == "error":
-            print(f"El kernel termino en ERROR: {msg}")
-        archivos = K.archivos_salida(sal)
-        print(f"envio {ult['nombre']} ({ult['estado']}): {len(archivos)} archivo(s) de salida")
-        for rel, f in archivos:
-            print(f"  {'copiando' if a.aplicar else 'COPIARIA'} {rel} -> espejo")
+        # --traer: cada envio pendiente terminado, por su version del kernel
+        if not pend:
+            raise SystemExit("No hay envios a Kaggle pendientes de traer")
+        listos, archivos_tot = [], 0
+        for e in pend:
+            est, msg = K.estado_kernel(kv(e))
+            if est not in ("complete", "error"):       # no es un error: aun no hay nada que traer de ese envio
+                try:
+                    hace = f" hace {(time.time() - time.mktime(time.strptime(e['creado'], '%Y-%m-%dT%H:%M:%S'))) / 60:.0f} min"
+                except (TypeError, ValueError):
+                    hace = ""
+                print(f"El envio {e['nombre']} sigue en Kaggle ({est or 'sin estado'}; lanzado{hace}): nada que traer "
+                      "todavia; vuelve a pulsar 'Traer de Kaggle' en unos minutos.")
+                continue
+            sal = _kaggle_dir() / "salida" / e["nombre"]
+            rc, out = K.bajar_salida(kv(e), sal)
+            if rc:
+                print(f"AVISO: no se pudo bajar la salida de {e['nombre']} (rc {rc}): {out[-300:]}")
+                continue
+            for f in sorted(sal.glob("*.log")):
+                print(f"--- {e['nombre']}: {f.name} (final)\n" + K.ocultar(f.read_text(encoding="utf-8", errors="replace"))[-1500:])
+            if est == "error":
+                print(f"El kernel de {e['nombre']} termino en ERROR: {msg}")
+            archivos = K.archivos_salida(sal)
+            archivos_tot += len(archivos)
+            print(f"envio {e['nombre']} (kernel v{e.get('version') or '?'}): {len(archivos)} archivo(s) de salida")
+            for rel, _ in archivos:
+                print(f"  {'copiando' if a.aplicar else 'COPIARIA'} {rel} -> espejo")
+            listos.append((e, est, msg, sal))
+        if not listos:
+            return 0
         if not a.aplicar:
             print("SOLO REPORTE: --aplicar los copia al espejo, reconcilia la cola y marca en error lo que no volvio")
             return 0
-        K.integrar(sal, T.raiz)
-        if ult["estado"] in ("lanzado", "corriendo"):
-            C.marcar_envio(con, ult["nombre"], ENVIO_DE_KERNEL[est], msg or None)
+        for e, est, msg, sal in listos:
+            K.integrar(sal, T.raiz)
+            if e["estado"] in ("lanzado", "corriendo"):
+                C.marcar_envio(con, e["nombre"], ENVIO_DE_KERNEL[est], msg or None)
         c = _carpetas_transporte()
         r = C.reconciliar(C.listar(con), _archivos_transporte(c))
         hechas, av = C.aplicar(con, r["acciones"], leer_error=_leer_error(c))
         for v in av:
             print(f"AVISO: {v}")
-        perdidos = C.sin_salida(con, ult["nombre"], f"el envio {ult['nombre']} termino ({est}) sin resultado para este trabajo")
-        C.marcar_envio(con, ult["nombre"], "traido")
-        print(f"OK {len(archivos)} archivo(s) en el espejo | {hechas} cambio(s) en la cola"
-              + (f" | {len(perdidos)} sin resultado -> error (Reintentar)" if perdidos else ""))
-        print("Siguiente: importa como siempre (asistente-importar, lote-importar o registrar)")
+        perdidos = 0
+        for e, est, msg, sal in listos:
+            perdidos += len(C.sin_salida(con, e["nombre"], f"el envio {e['nombre']} termino ({est}) sin resultado para este trabajo"))
+            C.marcar_envio(con, e["nombre"], "traido")
+        print(f"OK {len(listos)} envio(s), {archivos_tot} archivo(s) en el espejo | {hechas} cambio(s) en la cola"
+              + (f" | {perdidos} sin resultado -> error (Reintentar)" if perdidos else ""))
+        print("Siguiente: lote-importar --fijar-version y cache-importar --aplicar (o asistente-importar / registrar)")
+        if C.por_enviar(con):
+            print("Hay trabajos esperando su envio (trozo siguiente):  python xd.py worker --enviar --aplicar")
         return 0
     finally:
         if con:
@@ -1394,6 +1433,8 @@ def main():
     p.add_argument("--modo", choices=["auto", "sam3", "hijo"], default="auto")
     p.add_argument("--todas", action="store_true", help="incluir tareas que ya tienen la version")
     p.add_argument("--trozo", type=int, default=16, help="P.4: si hay mas tareas, genera 2 zips (t01 + t02); 0 = sin trozos")
+    p.add_argument("--sin-precodificar", dest="precodificar", action="store_false",
+                   help="P.4.R1: no precodificar las mismas tareas (por defecto si: el clic liviano necesita la cache)")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_preetiquetar)
     p = sub.add_parser("lote-importar", help="sube a Label Studio los *_pred.json nuevos de Drive")

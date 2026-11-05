@@ -4,7 +4,7 @@ Uso: con = abrir(ruta); t = crear(con, "preetiquetado", "lote_p3_x.zip", proyect
 import re, sqlite3, time
 from pathlib import Path
 
-ESQUEMA = 3                               # 1: P.1 | 2: P.2.7b (operador, envio, tabla envios) | 3: P.4.3 (grupo)
+ESQUEMA = 4          # 1: P.1 | 2: P.2.7b (operador, envio, tabla envios) | 3: P.4.3 (grupo) | 4: P.4.R1 (envios.version)
 TIPOS = ("asistente", "preetiquetado", "entrenamiento", "precodificacion")
 ESTADOS = ("pendiente", "enviado", "en_proceso", "listo", "importado", "error", "archivado")
 TRANSICIONES = {
@@ -44,6 +44,10 @@ ESTADOS_ENVIO = ("lanzado", "corriendo", "terminado", "fallido", "traido")
 # P.4.3: campo grupo (varios trabajos de un mismo lote original, por ejemplo lote_p13_..._t01 y _t02)
 _DDL_3 = """
 ALTER TABLE trabajos ADD COLUMN grupo TEXT;
+"""
+# P.4.R1: version del kernel de Kaggle de cada envio (status y output se piden por version: el kernel es uno solo)
+_DDL_4 = """
+ALTER TABLE envios ADD COLUMN version INTEGER;
 """
 
 
@@ -94,6 +98,11 @@ def abrir(ruta, timeout=10.0):
         with con:
             con.executescript(_DDL_3)
             con.execute("PRAGMA user_version = 3")
+        ver = 3
+    if ver < 4:                                    # migracion 3 -> 4: version del kernel por envio
+        with con:
+            con.executescript(_DDL_4)
+            con.execute("PRAGMA user_version = 4")
     return con
 
 
@@ -206,13 +215,13 @@ def por_enviar(con):
     return [dict(r) for r in con.execute("SELECT * FROM trabajos WHERE estado = 'enviado' AND envio IS NULL ORDER BY id")]
 
 
-def crear_envio(con, nombre, proveedor, operador, ids, ahora=None):
+def crear_envio(con, nombre, proveedor, operador, ids, ahora=None, version=None):
     """Registra el envio y le asigna los trabajos (solo si siguen en 'enviado' sin envio). -> envio (dict)."""
     nombre = _nombre(nombre, "envio")
     f = _ahora(ahora)
     with con:
-        con.execute("INSERT INTO envios (nombre, proveedor, operador, estado, creado, actualizado) VALUES (?, ?, ?, ?, ?, ?)",
-                    (nombre, proveedor, operador, "lanzado", f, f))
+        con.execute("INSERT INTO envios (nombre, proveedor, operador, estado, creado, actualizado, version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)", (nombre, proveedor, operador, "lanzado", f, f, version))
         for i in ids:
             cur = con.execute("UPDATE trabajos SET envio = ?, operador = ?, actualizado = ? "
                               "WHERE id = ? AND estado = 'enviado' AND envio IS NULL", (nombre, operador, f, i))
@@ -229,6 +238,12 @@ def envio(con, nombre):
 def ultimo_envio(con, proveedor=None):
     sql = "SELECT * FROM envios" + (" WHERE proveedor = ?" if proveedor else "") + " ORDER BY id DESC LIMIT 1"
     return _fila(con.execute(sql, (proveedor,) if proveedor else ()).fetchone())
+
+
+def envios_pendientes(con, proveedor):
+    """Envios aun no traidos (del mas viejo al mas nuevo): los que hay que consultar o traer."""
+    return [dict(r) for r in con.execute("SELECT * FROM envios WHERE proveedor = ? AND estado != 'traido' ORDER BY id",
+                                         (proveedor,))]
 
 
 def trabajos_de(con, nombre):

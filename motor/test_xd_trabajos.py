@@ -235,6 +235,43 @@ def test_tablero_en_modo_kaggle():
         assert tablero.siguiente({"slug": "s", "n": 3, "spec": True, "lotes": {"en_colab": ["lote_p3_x.zip"]}})["donde"] == "kaggle"
 
 
+def test_preetiquetar_precodifica_las_mismas_tareas():
+    """P.4.R1: el trozo 1 del lote y el de la precodificacion son las MISMAS tareas (si no, el clic liviano no responde)."""
+    with tempfile.TemporaryDirectory() as t:
+        raiz, drive = _preparar(Path(t))
+        xd.ENV = {"TRANSPORTE": "kaggle"}
+        llamadas = []
+
+        def en_motor(script, *args):
+            llamadas.append((script, [str(x) for x in args]))
+            xd.LOTES_LOCAL.mkdir(parents=True, exist_ok=True)
+            if script == "exportar_lote.py":
+                salida = []
+                for num, ids in ((1, [7, 3, 9]), (2, [5, 1])):          # el orden de la muestra, no el de Label Studio
+                    zp = xd.LOTES_LOCAL / f"lote_p4_v_x_t{num:02d}.zip"
+                    with zipfile.ZipFile(zp, "w") as z:
+                        z.writestr("manifiesto.json", json.dumps({"grupo": "lote_p4_v_x", "tareas": [{"id": i} for i in ids]}))
+                    salida.append(f"OK -> /app/lotes/{zp.name}")
+                return 0, "\n".join(salida)
+            zp = xd.LOTES_LOCAL / "pre_p4_y_t01.zip"                        # exportar_pre.py
+            with zipfile.ZipFile(zp, "w") as z:
+                z.writestr("trabajo.json", json.dumps({"grupo": "pre_p4_y"}))
+            return 0, f"OK -> /app/lotes/{zp.name}"
+        xd.en_motor = en_motor
+        a = NS(proyecto=4, muestra=5, semilla=0, minimo=1, prioridad="", modo="sam3", todas=False, trozo=3,
+               precodificar=True, aplicar=True)
+        rc, out = _correr(xd.cmd_preetiquetar, a)
+        assert rc == 0, out
+        pre = [args for s_, args in llamadas if s_ == "exportar_pre.py"]
+        assert len(pre) == 1 and "--tareas" in pre[0] and pre[0][pre[0].index("--tareas") + 1] == "7,3,9,5,1", pre
+        assert pre[0][pre[0].index("--trozo") + 1] == "3"
+        assert _uno("precodificacion", "pre_p4_y_t01.zip")["estado"] == "enviado"
+        assert _uno("preetiquetado", "lote_p4_v_x_t02.zip")["grupo"] == "lote_p4_v_x"
+        llamadas.clear()
+        rc, out = _correr(xd.cmd_preetiquetar, NS(**{**vars(a), "precodificar": False}))
+        assert not [x for x in llamadas if x[0] == "exportar_pre.py"]                 # --sin-precodificar
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

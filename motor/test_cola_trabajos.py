@@ -206,7 +206,7 @@ def test_migracion_1_a_2_conserva_trabajos():
             c.execute("PRAGMA user_version = 1")
             c.commit()
         with closing(C.abrir(ruta)) as con:
-            assert con.execute("PRAGMA user_version").fetchone()[0] == 3    # P.4.3: llega hasta esquema 3
+            assert con.execute("PRAGMA user_version").fetchone()[0] == C.ESQUEMA    # llega hasta el ultimo esquema
             tr = C.buscar(con, "preetiquetado", "lote_p1_a.zip")
             assert tr["estado"] == "enviado" and tr["envio"] is None and tr["operador"] is None and tr["grupo"] is None
             assert [x["archivo"] for x in C.por_enviar(con)] == ["lote_p1_a.zip"]
@@ -219,6 +219,9 @@ def test_migracion_1_a_2_conserva_trabajos():
             assert C.obtener(con, tr["id"])["estado"] == "en_proceso"
             assert [x["id"] for x in C.sin_salida(con, "envio_1", "no volvio")] == [tr["id"]]
             assert C.ultimo_envio(con, "kaggle")["nombre"] == "envio_1" and C.ultimo_envio(con, "colab") is None
+            assert [e["nombre"] for e in C.envios_pendientes(con, "kaggle")] == ["envio_1"]       # P.4.R1
+            C.marcar_envio(con, "envio_1", "traido")
+            assert C.envios_pendientes(con, "kaggle") == [] and C.envio(con, "envio_1")["version"] is None
 
 
 if __name__ == "__main__":
