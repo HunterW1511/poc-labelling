@@ -348,6 +348,85 @@ def test_envios_escalonados_por_trozo():
                 os.environ["KAGGLE_CONFIG_DIR"] = cfg
 
 
+def test_daemon_ciclo_completo():
+    """P.5.R1: el daemon encadena estado -> traer -> importar (lotes y cache) -> siguiente trozo; sin --aplicar no escribe."""
+    import cola_trabajos as C
+    import cache_sam3 as CS
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        (t / "motor").mkdir()
+        shutil.copy2(RAIZ / "motor" / "lanzador.py", t / "motor")
+        esp = t / "datos" / "kaggle" / "espejo" / "lotes"
+        esp.mkdir(parents=True)
+        for n in ("lote_p3_x_t01.zip", "lote_p3_x_t02.zip"):
+            (esp / n).write_bytes(b"zip")
+        (t / "cfg").mkdir()
+        (t / "cfg" / "access_token").write_text(TOKEN)
+        db = t / "datos" / "trabajos.sqlite"
+        with closing(C.abrir(db)) as con:
+            for n in ("lote_p3_x_t01.zip", "lote_p3_x_t02.zip"):
+                C.crear(con, "preetiquetado", n, proyecto=3, estado="enviado", grupo="lote_p3_x")
+        clave = CS.clave("a" * 64, 644, "b" * 64, "8.4.174")
+        ks = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida")
+        viejo = (xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, xd.LOTES_LOCAL, xd.en_motor, os.environ.get("KAGGLE_CONFIG_DIR"),
+                 {n: getattr(K, n) for n in ks})
+        estado, version, importados, bajados = {}, [0], [], []
+        try:
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}, db
+            xd.LOTES_LOCAL = t / "motor" / "lotes"
+            os.environ["KAGGLE_CONFIG_DIR"] = str(t / "cfg")
+            K.estado_kernel = lambda k, **kw: (estado.get(k), "")
+            K.estado_dataset = lambda ds, **kw: "ready"
+            K.subir_envio = lambda c, existe, n, **kw: (0, "")
+            K.esperar_listo = lambda ds, **kw: 1.0
+            def push(c, limite_s=0, **kw):
+                version[0] += 1
+                return 0, f"Kernel version {version[0]} successfully pushed."
+            K.push_kernel = push
+            def bajar(k, dest, **kw):
+                bajados.append(k)
+                (Path(dest) / "lotes" / "cache").mkdir(parents=True, exist_ok=True)
+                n = "lote_p3_x_t01" if k.endswith("/1") else "lote_p3_x_t02"
+                (Path(dest) / "lotes" / f"{n}_pred.json").write_text(json.dumps({"proyecto": 3, "predicciones": []}))
+                (Path(dest) / "lotes" / "cache" / f"{clave}.pt").write_bytes(b"pt")
+                return 0, ""
+            K.bajar_salida = bajar
+            def en_motor(script, *args):
+                assert script == "importar_lote.py", script
+                importados.append(args[0])
+                return 0, "OK"
+            xd.en_motor = en_motor
+            def ciclo(aplicar):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    assert xd.cmd_daemon(NS(intervalo=0, una_vez=True, aplicar=aplicar)) == 0
+                return out.getvalue()
+            out = ciclo(False)                                                   # reporte: no escribe nada
+            assert "MODO REPORTE" in out and version[0] == 0 and "SOLO REPORTE" in out, out
+            out = ciclo(True)                                                    # ciclo 1: sale el trozo 1
+            assert version[0] == 1 and "trozo 1" in out and not bajados, out
+            estado["emi/xd-worker/1"] = "complete"
+            out = ciclo(True)                                                    # ciclo 2: trae, importa, trozo 2
+            assert bajados == ["emi/xd-worker/1"] and importados == ["lote_p3_x_t01_pred.json"], out
+            assert (t / "motor" / "cache_sam3" / f"{clave}.pt").exists() and version[0] == 2 and "trozo 2" in out, out
+            estado["emi/xd-worker/2"] = "running"
+            out = ciclo(True)                                                    # ciclo 3: el 2 corre; nada que hacer
+            assert version[0] == 2 and bajados == ["emi/xd-worker/1"] and "nada que traer" in out, out
+            estado["emi/xd-worker/2"] = "complete"
+            out = ciclo(True)                                                    # ciclo 4: trae e importa el 2
+            assert importados == ["lote_p3_x_t01_pred.json", "lote_p3_x_t02_pred.json"] and "Nada que enviar" in out, out
+            with closing(C.abrir(db)) as con:
+                assert {x["estado"] for x in C.listar(con)} == {"importado"} and C.envios_pendientes(con, "kaggle") == []
+        finally:
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, xd.LOTES_LOCAL, xd.en_motor, cfg, f = viejo
+            for n, v in f.items():
+                setattr(K, n, v)
+            if cfg is None:
+                os.environ.pop("KAGGLE_CONFIG_DIR", None)
+            else:
+                os.environ["KAGGLE_CONFIG_DIR"] = cfg
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

@@ -3,6 +3,7 @@
 en Windows, Mac o Linux, sin venv. Lee la configuracion del .env de esta carpeta.
 Uso: python xd.py <comando> [opciones]    (python xd.py -h)"""
 import argparse, json, os, re, shutil, subprocess, sys, time, urllib.request
+from types import SimpleNamespace as NS_
 from pathlib import Path, PurePosixPath
 
 RAIZ = Path(__file__).resolve().parent
@@ -1320,80 +1321,59 @@ def _reconciliar(C, a):
             con.close()
 
 
+def _paso(nombre, f, *args):
+    """Un paso del daemon: nunca lo tumba (un SystemExit es un aviso, no una caida). -> rc o None si fallo."""
+    print(f"-- {nombre}")
+    try:
+        return f(*args)
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            print(f"   {e.code}")
+        return None
+    except Exception as e:                           # no dejar caer el daemon por un error de un paso
+        print(f"   ERROR {type(e).__name__}: {e}")
+        return None
+
+
+def ciclo_daemon(aplicar):
+    """Un ciclo: lo mismo que se haria a mano, en orden. Sin --aplicar solo reporta (nada escribe)."""
+    T = _transporte()
+    w = lambda **kw: NS_(**{"enviar": False, "estado": False, "traer": False, "limite": 0, "aplicar": aplicar, **kw})
+    if T.nombre == "kaggle":
+        _paso("estado de los envios", cmd_worker, w(estado=True))
+        _paso("traer lo terminado", cmd_worker, w(traer=True))
+    else:                                            # Drive/Colab: el worker deja los resultados; se reconcilia
+        _paso("reconciliar con Drive", cmd_trabajos, NS_(reconciliar=True, reintentar=0, aplicar=aplicar, horas=24,
+                                                         tipo="", estado="", todos=False))
+    if aplicar:
+        _paso("importar predicciones", cmd_lote_importar, NS_(sufijo="", fijar_version=True))
+    else:
+        d = T.carpeta("lotes")
+        nuevos = [f.name for f in d.glob("*_pred.json") if not (LOTES_LOCAL / f.name).exists()] if d and d.is_dir() else []
+        print(f"-- importar predicciones\n   {len(nuevos)} _pred.json por importar" + (" (con --aplicar)" if nuevos else ""))
+    _paso("importar cache de SAM 3", cmd_cache_importar, NS_(aplicar=aplicar))
+    if T.nombre == "kaggle":
+        _paso("enviar el siguiente trozo", cmd_worker, w(enviar=True))
+
+
 def cmd_daemon(a):
-    """Demonio que consulta Kaggle cada N min y si hay trabajos externos OK, los importa."""
-    import subprocess
-    import time
-    
-    # Importar módulos necesarios
-    sys.path.insert(0, str(RAIZ / "motor"))
-    import cola_trabajos as C
-    import kaggle_xd as K
-    
-    intervalo = a.intervalo * 60  # convertir a segundos
-    ciclo = 0
-    
-    usuario = K.usuario(ENV)
-    kernel = f"{usuario}/{ENV.get('KAGGLE_KERNEL', 'xd-worker')}"
-    
-    print(f"daemon: iniciando polling cada {a.intervalo} min (Ctrl+C para detener)")
-    print(f"daemon: kernel {kernel}")
-    
+    """P.5.R1: encadena los pasos externos cada N minutos: estado -> traer -> importar (lotes y cache) -> enviar el
+    siguiente trozo. Sin --aplicar solo reporta. Ctrl+C lo detiene."""
+    if not a.aplicar:
+        print("daemon en MODO REPORTE: no escribe nada (agrega --aplicar para que traiga, importe y envie)")
+    n = 0
     try:
         while True:
-            ciclo += 1
-            ahora = time.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"\n[{ahora}] Ciclo {ciclo}: consultando Kaggle...")
-            
-            # 1. Consultar estado del kernel
-            est, msg = K.estado_kernel(kernel)
-            print(f"  kernel: {est or 'sin ejecuciones'}" + (f" | {msg}" if msg else ""))
-            
-            # 2. Si hay un envío terminado OK, actualizar estado y reconciliar
-            con = C.abrir(TRABAJOS_DB)
-            try:
-                ult = C.ultimo_envio(con, "kaggle")
-                if ult and ult["estado"] in ("lanzado", "corriendo"):
-                    nuevo = ENVIO_DE_KERNEL.get(est or "")
-                    if nuevo and nuevo != ult["estado"]:
-                        print(f"  envío {ult['nombre']}: {ult['estado']} -> {nuevo}")
-                        C.marcar_envio(con, ult["nombre"], nuevo, msg or None)
-                
-                # 3. Importar trabajos listos (estado="listo") sin resultado aún
-                listos = [
-                    (x["id"], x["archivo"])
-                    for x in C.listar(con, estado="listo")
-                    if x.get("resultado") is None
-                ]
-                
-                if listos:
-                    print(f"daemon: {len(listos)} trabajo(s) listo(s) pendiente(s) de importar")
-                    for tid, arch in listos:
-                        # Solo precodificaciones: importar_pred.py
-                        if "lote_" in arch or "pre_" in arch:
-                            print(f"  → importando predicciones {tid} ({arch})...")
-                            rc_i = subprocess.call(["python", str(RAIZ / "motor" / "importar_pred.py"), arch], cwd=RAIZ)
-                            if rc_i != 0:
-                                print(f"AVISO: importar_pred.py {arch} rc={rc_i}")
-                        else:
-                            print(f"  → {tid} ({arch}): tipo no auto-importable, requiere intervención manual")
-                else:
-                    print("daemon: no hay trabajos listos pendientes de importar")
-            finally:
-                con.close()
-            
-            if a.solo_una_vez:
-                print("daemon: --solo-una-vez activo, saliendo")
-                break
-            
-            print(f"daemon: durmiendo {a.intervalo} min hasta el próximo ciclo...")
-            time.sleep(intervalo)
-    
+            n += 1
+            print(f"\n=== ciclo {n} | {time.strftime('%Y-%m-%d %H:%M:%S')} | transporte {_transporte().nombre}")
+            ciclo_daemon(a.aplicar)
+            if a.una_vez:
+                return 0
+            print(f"daemon: siguiente ciclo en {a.intervalo} min (Ctrl+C para detener)")
+            time.sleep(max(1, a.intervalo) * 60)
     except KeyboardInterrupt:
-        print("\ndaemon: detenido por usuario")
+        print("\ndaemon: detenido")
         return 0
-    
-    return 0
 
 
 def main():
@@ -1579,9 +1559,10 @@ def main():
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_trabajos)
 
-    p = sub.add_parser("daemon", help="P.5: encadenamiento automatico (polling de Kaggle, traer e importar)")
-    p.add_argument("--intervalo", type=int, default=5, help="minutos entre chequeos (defecto 5)")
-    p.add_argument("--solo-una-vez", action="store_true", help="chequea una vez y sale (testing)")
+    p = sub.add_parser("daemon", help="P.5: encadena estado -> traer -> importar -> siguiente trozo cada N minutos")
+    p.add_argument("--intervalo", type=int, default=5, help="minutos entre ciclos (defecto 5)")
+    p.add_argument("--una-vez", "--solo-una-vez", dest="una_vez", action="store_true", help="un solo ciclo y sale")
+    p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta (no trae, no importa, no envia)")
     p.set_defaults(f=cmd_daemon)
 
     a = ap.parse_args()

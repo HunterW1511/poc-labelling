@@ -138,3 +138,23 @@ La UI podria mostrar:
 - Proxima accion automatica prevista
 
 Esto queda para P.7 (UI dual). En P.5 el daemon es CLI puro.
+
+## Revision P.5.R1 (Claude Code, 05/11/2026): lo que hace el codigo
+
+El daemon de P.5.2 llamaba a `motor/importar_pred.py` (no existe), solo buscaba trabajos `listo` sin resultado (un
+`listo` siempre lo tiene) y nunca descargaba la salida de Kaggle: no importaba nada. Reescrito:
+
+```
+python xd.py daemon [--intervalo 5] [--una-vez] [--aplicar]
+```
+
+- Cada ciclo hace, en orden y con los mismos comandos que a mano: `worker --estado` -> `worker --traer` ->
+  `lote-importar --fijar-version` -> `cache-importar` -> `worker --enviar` (el siguiente trozo, solo si el kernel esta
+  libre). Con Drive/Colab: `trabajos --reconciliar` en lugar de estado/traer, y sin enviar.
+- **Sin `--aplicar` solo reporta** (regla de oro 3): no trae, no importa, no envia. Con `--aplicar` es el modo
+  "automatico" del diseno.
+- Un paso que falla imprime el motivo y el ciclo sigue; el daemon no se cae. Ctrl+C lo detiene.
+- No escribe `datos/daemon.log`: la salida va a la consola (para guardarla:
+  `python xd.py daemon --aplicar *> datos\daemon.log` en PowerShell).
+- Test: `test_kaggle.test_daemon_ciclo_completo` (reporte sin escribir; trozo 1 -> traer e importar lotes y cache ->
+  trozo 2 -> traer e importar; todo `importado`).
