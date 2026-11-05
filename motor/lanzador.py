@@ -108,8 +108,8 @@ def juntar(grupo, stem, salidas, carpeta):
     idx = [json.loads((s / f"{stem}_cache.json").read_text(encoding="utf-8")) for s in salidas]
     (Path(carpeta) / "cache").mkdir(parents=True, exist_ok=True)
     for s in salidas:
-        for f in (s / "cache").glob("*.pt"):
-            os.replace(f, Path(carpeta) / "cache" / f.name)
+        for f in (s / "cache").glob("*.pt"):           # shutil.move: en Kaggle /tmp y /kaggle/working son discos
+            shutil.move(str(f), str(Path(carpeta) / "cache" / f.name))   # distintos (os.replace da EXDEV)
     out = {**idx[0], "seg": max(i.get("seg", 0) for i in idx), "fotos": [f for i in idx for f in i["fotos"]]}
     nombre = f"{stem}_cache.json"
     (Path(carpeta) / nombre).write_text(json.dumps(out, ensure_ascii=True, indent=1), encoding="utf-8")

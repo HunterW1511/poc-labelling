@@ -164,7 +164,14 @@ def test_juntar_precodificacion():
             (s / "cache" / f"c{i}.pt").write_bytes(b"x")
             (s / "pre_p1_x_cache.json").write_text(json.dumps({"imgsz": 644, "seg": 10 + i, "fotos": [{"tarea": i}]}))
             salidas.append(s)
-        assert L.juntar("precodificacion", "pre_p1_x", salidas, t / "out") == "pre_p1_x_cache.json"
+        replace = L.os.replace                                                   # P.3.7: en Kaggle /tmp y /kaggle/working
+        def entre_discos(a, b):                                                  # son discos distintos: os.replace falla
+            raise OSError(18, "Invalid cross-device link")
+        L.os.replace = entre_discos
+        try:
+            assert L.juntar("precodificacion", "pre_p1_x", salidas, t / "out") == "pre_p1_x_cache.json"
+        finally:
+            L.os.replace = replace
         idx = json.loads((t / "out" / "pre_p1_x_cache.json").read_text())
         assert [f["tarea"] for f in idx["fotos"]] == [0, 1] and idx["seg"] == 11
         assert sorted(f.name for f in (t / "out" / "cache").iterdir()) == ["c0.pt", "c1.pt"]

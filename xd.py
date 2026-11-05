@@ -190,7 +190,7 @@ def cmd_preetiquetar(a):
         args = [a.proyecto, *extra, "--modo", a.modo, "--reporte"] + (["--todas"] if a.todas else [])
         rc = en_motor("exportar_lote.py", *args)[0]
         if rc == 0:
-            print("Modo reporte. Para generar el lote y copiarlo a Drive agrega --aplicar")
+            print("Modo reporte. Para generar el lote y enviarlo al worker agrega --aplicar")
         return rc
     a.limite, a.tareas, a.extra = 0, "", extra
     return cmd_lote_exportar(a)
@@ -779,7 +779,7 @@ def cmd_worker(a):
                         avisos.append(f"{f.name}: esta en el espejo pero no en la cola (python xd.py trabajos --reconciliar --aplicar)")
             print(f"kernel {kernel} (PRIVADO, GPU T4) | operador {u} | credencial {cred}")
             for t, c, f in filas:
-                print(f"  {t['id']:>4} {t['tipo']:<14}{f.name}  ({f.stat().st_size / 1e6:.1f} MB)")
+                print(f"  {t['id']:>4} {t['tipo']:<16}{f.name}  ({f.stat().st_size / 1e6:.1f} MB)")
             for v in avisos:
                 print(f"AVISO: {v}")
             if not filas:
@@ -1105,7 +1105,7 @@ def _archivos_transporte(c):
 def _linea_trabajo(t):
     quien = f"p{t['proyecto']}" if t["proyecto"] is not None else (t["slug"] or "-")
     err = f"  ERROR: {t['error'][-60:]!r}" if t["error"] else ""
-    return (f"  {t['id']:>4} {t['tipo']:<14}{quien:<16} {t['estado']:<11}{t['actualizado']:<20}"
+    return (f"  {t['id']:>4} {t['tipo']:<16}{quien:<16} {t['estado']:<11}{t['actualizado']:<20}"
             f"{t['intentos']:>3}  {t['archivo']}{err}")
 
 
@@ -1126,7 +1126,7 @@ def cmd_trabajos(a):
     con.close()
     print(f"Cola {TRABAJOS_DB} | {len(ts)} trabajo(s)" + ("" if a.todos or a.estado else " sin terminar (--todos: todos)"))
     if ts:
-        print(f"  {'id':>4} {'tipo':<14}{'quien':<16} {'estado':<11}{'actualizado':<20}{'int':>3}  archivo")
+        print(f"  {'id':>4} {'tipo':<16}{'quien':<16} {'estado':<11}{'actualizado':<20}{'int':>3}  archivo")
         for t in ts:
             print(_linea_trabajo(t))
     return 0
