@@ -106,7 +106,7 @@ def test_asistente_continuar_importar_y_reintentar():
         assert not (bz / f"{z2.stem}.estado.json").exists() and list((bz / "_archivo").glob(f"{z2.stem}.estado_*.json"))
         # Colab lo procesa bien; asistente-importar --aplicar marca importado ESE trabajo
         _colab_asistente(bz, z2)
-        rc, out = _correr(xd.cmd_asistente_importar, NS(slug="prueba", aplicar=True, forzar=False, comparar=""))
+        rc, out = _correr(xd.cmd_asistente_importar, NS(slug="prueba", aplicar=True, forzar=False, comparar="", si=False))
         assert rc == 0 and (raiz / "motor" / "proyectos" / "prueba" / "spec.json").exists(), out
         t2 = _uno("asistente", z2.name)
         assert t2["estado"] == "importado" and t2["resultado"] == f"{z2.stem}_resultado.json"
