@@ -50,8 +50,8 @@ la cache de SAM 3 precodificada en el worker para un clic rapido en el hub (P.3)
 | 1. Caso -> spec | `asistente SLUG --audio X` / `--texto X`, luego `asistente-importar SLUG [--aplicar]`. Sin asistente: `spec-nueva SLUG --titulo T [--aplicar]`, editar y `validar SLUG` | Worker o a mano |
 | 2. Crear proyecto | `crear-proyecto SLUG [--aplicar]` (se niega si la spec tiene errores) | Host + Label Studio |
 | 3. Fotos | `plan SLUG`, `python capturar.py SLUG`, `sincronizar SLUG` | Host (webcam) |
-| 4. Pre-etiquetado | `preetiquetar N --muestra 30 [--aplicar]`, worker, `lote-importar --fijar-version` | Worker |
-| 5. Revision | `precodificar N --aplicar` (worker), `cache-importar --aplicar`; luego Label Studio + clic de SAM 3 (~0.2 s) | Worker + motor (CPU) |
+| 4. Pre-etiquetado | `preetiquetar N --muestra 30 [--trozo 16] [--aplicar]`, worker, `lote-importar --fijar-version` | Worker |
+| 5. Revision | `precodificar N [--trozo 16] --aplicar` (worker), `cache-importar --aplicar`; luego Label Studio + clic de SAM 3 (~0.2 s) | Worker + motor (CPU) |
 | 6. Modelo hijo | `dataset N --drive [--epochs E ...]`, worker, `registrar N --run ultimo --activar` | Worker (Kaggle: las 2 T4) |
 | 7. Mas tareas | `preetiquetar N --modo hijo` | Worker |
 | 8. Validacion | `aceptacion N`, `modelos N` | Host y contenedor |
@@ -74,9 +74,10 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
   la salida al espejo local (reconcilia la cola; lo que no vuelve queda en error para Reintentar).
 - `python xd.py kaggle-pesos [--pesos RUTA] [--aplicar]`: sube `sam3.pt` + SAM License como dataset **privado**
   `<KAGGLE_USUARIO>/xd-pesos` (una cuenta por persona; token en `~/.kaggle/access_token`). El `--aplicar` lo corre la persona.
-- `python xd.py precodificar N [--todas] [--limite K] [--aplicar]`: fotos del proyecto sin cache de SAM 3 -> trabajo
-  para el worker (un SAM 3 por GPU en Kaggle). `python xd.py cache-importar [--aplicar]` lleva la cache traida a
-  `motor/cache_sam3/`, donde la usa el clic. `python xd.py sam3-ligero [--aplicar]`: checkpoint del clic liviano.
+- `python xd.py precodificar N [--todas] [--limite K] [--trozo 16] [--aplicar]`: fotos del proyecto sin cache de SAM 3 -> trabajo
+  para el worker (un SAM 3 por GPU en Kaggle). P.4: `--trozo K` genera 2 zips (t01 con K fotos, t02 con el resto) en
+  2 envios escalonados (trozo 1 primero, luego el resto) para superposicion de envios. `python xd.py cache-importar [--aplicar]`
+  lleva la cache traida a `motor/cache_sam3/`, donde la usa el clic. `python xd.py sam3-ligero [--aplicar]`: checkpoint del clic liviano.
 - `python xd.py reiniciar-motor [--precalentar --proyecto N]`, `python xd.py archivar ARCHIVO [--aplicar]` (asist_*, lote_p* o dataset_p*).
 - `motor/corregir_pares.py` (manual, en el contenedor): corrige pares de clases confundidas; lo consume `exportar_yolo --correcciones`.
 - `herramientas/`: `inventario.ps1` (que datos hay), `limpiar.ps1` (vaciar datos, con reporte; `-Aplicar` borra) y

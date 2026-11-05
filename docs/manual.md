@@ -57,14 +57,17 @@ Opcion B, sin asistente:
 La carpeta de tipo negativo es fondo SIN objetos. Nunca personas al fondo de ninguna foto.
 
 ### 2.4 Pre-etiquetar una muestra
-1. **Pre-etiquetar muestra** (`preetiquetar N --muestra 30`): deja un lote en Drive (`PoC-Labelling/lotes`).
+1. **Pre-etiquetar muestra** (`preetiquetar N --muestra 30 [--trozo 16]`): deja un lote en Drive (`PoC-Labelling/lotes`).
+   P.4: con `--trozo 16` (defecto) genera 2 trozos si hay mas de 16 tareas: el trozo 1 se envia primero y llega rapido;
+   el resto viaja en un segundo envio. "Pasos externos" muestra "Trozo N de M" para cada uno.
 2. Pasalo por el worker (Kaggle o Colab). **Pasos externos** en la UI muestra en que punto esta
    (con Colab, si dice "cambios sin guardar", pulsa **Reconciliar**).
-3. **Importar predicciones** (`lote-importar --fijar-version`).
+3. **Importar predicciones** (`lote-importar --fijar-version`). Con trozos, importa cada trozo conforme llega.
 
 ### 2.5 Revisar en Label Studio
-Antes, una vez por tanda de fotos nuevas: **precodificar** (`python xd.py precodificar N --aplicar`), pasarlo por el
+Antes, una vez por tanda de fotos nuevas: **precodificar** (`python xd.py precodificar N [--trozo 16] --aplicar`), pasarlo por el
 worker y `python xd.py cache-importar --aplicar`. Asi el clic no codifica en la laptop (de 20-40 s a ~0.2 s).
+Con trozos (P.4), el trozo 1 llega rapido y puedes empezar a revisar mientras el resto procesa.
 Abre el proyecto, revisa cada tarea de la muestra y corrige. Para agregar un objeto: elige la etiqueta y haz clic
 sobre el objeto (SAM 3 interactivo dibuja el poligono). Si una foto no dibuja nada, no esta precodificada (lo dice
 **Pasos externos**). El KPI es el conteo exacto por foto: que no falte ni sobre ningun objeto.
