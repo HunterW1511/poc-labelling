@@ -331,6 +331,12 @@ def externos():
     envios = {}
     if v["sin_guardar"]:
         out["avisos"].append(f"{v['sin_guardar']} cambio(s) de estado vistos en Drive sin guardar en la cola: Reconciliar")
+    try:                                               # P.3.7: el aviso del clic (p. ej. foto sin precodificar)
+        motivo = ((xd._estado() or {}).get("cache_disco") or {}).get("ultimo_motivo")
+        if motivo:
+            out["avisos"].append(f"Clic: {motivo}")
+    except Exception:
+        pass
     it = out["items"]
     ultimo_ds = {}                                   # el cuaderno de entrenamiento toma el ultimo dataset del proyecto
     for t in v["trabajos"]:

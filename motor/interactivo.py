@@ -175,6 +175,7 @@ def _activar(p, ruta):
     if _de_disco(p, ruta):                               # P.3.4: precodificada por el worker
         _guardar(ruta, p.features, p.dataset)
         _est["ruta"] = ruta
+        _disco["ultimo_motivo"] = None                   # el aviso de la UI se borra cuando la cache vuelve a servir
         return "disco"
     if INTERACTIVO == "liviano":                         # P.3.5: sin encoder no se codifica en el hub
         return "sin_cache"

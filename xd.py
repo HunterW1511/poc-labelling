@@ -1153,7 +1153,7 @@ def _reintentar(C, a):
         hay_zip = (carpeta / t["archivo"]).is_file()
         for f, dest in mover:
             print(f"{'moviendo' if a.aplicar else 'MOVERIA'} {f} -> {dest}")
-        print(f"trabajo {t['id']}: error -> pendiente" + (" -> enviado (el zip sigue en Drive)" if hay_zip else
+        print(f"trabajo {t['id']}: error -> pendiente" + (f" -> enviado (el zip sigue en el transporte: {T.nombre})" if hay_zip else
               f"; AVISO: {t['archivo']} ya no esta en {carpeta}, se queda pendiente"))
         if not a.aplicar:
             print("SOLO REPORTE: usa --aplicar para reintentar")

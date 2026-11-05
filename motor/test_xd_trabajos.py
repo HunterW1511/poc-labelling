@@ -14,6 +14,8 @@ import esquema_llm as E
 import trabajo
 import xd
 
+xd._estado = lambda: None          # P.3.7: el tablero lee avisos del motor; los tests no dependen del motor real
+
 MET = {"esquema": 1, "creado": "2026-11-03T10:00:00", "dataset": "dataset_p4_x.zip", "formato": "det",
        "modelo_base": "yolo11n.pt", "params": {"imgsz": 640}, "conteo": {"exactas": 1, "imagenes": 2, "tasa": 0.5},
        "map50": 0.5, "map50_95": 0.3, "por_clase": {}, "proyecto": 4}

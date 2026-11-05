@@ -13,7 +13,7 @@ Manual de uso paso a paso: [docs/manual.md](docs/manual.md).
 | Pieza | Donde | Que hace |
 | --- | --- | --- |
 | Label Studio 1.23 + Postgres | Docker (`docker-compose.yml`), http://127.0.0.1:8080 | Proyectos, tareas y revision humana. `mis_imagenes/` montada en solo lectura |
-| Motor (`motor/`) | Docker, puerto 9090 | Backend ML: clic interactivo de SAM 3 y cola semantica de respaldo. `GET /estado` dice que esta cargado y por que espera la cola |
+| Motor (`motor/`) | Docker, puerto 9090 | Backend ML: clic interactivo de SAM 3 **liviano** (sin image encoder, carga ~4 s, ~0.4 GB) que usa la cache que precodifica el worker ([docs/cache_sam3.md](docs/cache_sam3.md)); cola semantica de respaldo. `GET /estado` dice que esta cargado, de donde sale cada clic y por que espera la cola |
 | `xd.py`, `ui.py`, `tablero.py` | Host | CLI (fuente de verdad), UI en http://127.0.0.1:8090 y tablero de solo lectura |
 | Cola de trabajos (`datos/trabajos.sqlite`) | Host (disco local, nunca en Drive) | Estado de cada trabajo externo (asistente, pre-etiquetado, entrenamiento): sobrevive a reinicios; Drive solo transporta. Diseno: [docs/cola_trabajos.md](docs/cola_trabajos.md) |
 | `capturar.py`, `ver_cajas.py` | Host | Webcam: captura de fotos y modelo en vivo (OpenVINO o PyTorch) |
@@ -39,6 +39,9 @@ la cache de SAM 3 precodificada en el worker para un clic rapido en el hub (P.3)
      dataset privado `xd-pesos`; ~3 min). Lo corre la persona, no un agente.
 7. Worker en **Colab** (respaldo): `TRANSPORTE=drive` y `python xd.py cuadernos --llevar --aplicar` (copia
    `worker.ipynb` a `Colab Notebooks` en tu Drive).
+8. Clic liviano (una vez): `python xd.py sam3-ligero --aplicar` extrae de `sam3.pt` el checkpoint del interactivo
+   sin image encoder (47 MB, ~1 min). Sin el, el motor lo construye desde `sam3.pt` en cada arranque (~80 s).
+   `MOTOR_INTERACTIVO=completo` en `.env` vuelve al clic de antes (carga 3-7 min, codifica en la CPU).
 
 ## Flujo de un proyecto
 
@@ -48,7 +51,7 @@ la cache de SAM 3 precodificada en el worker para un clic rapido en el hub (P.3)
 | 2. Crear proyecto | `crear-proyecto SLUG [--aplicar]` (se niega si la spec tiene errores) | Host + Label Studio |
 | 3. Fotos | `plan SLUG`, `python capturar.py SLUG`, `sincronizar SLUG` | Host (webcam) |
 | 4. Pre-etiquetado | `preetiquetar N --muestra 30 [--aplicar]`, worker, `lote-importar --fijar-version` | Worker |
-| 5. Revision | Label Studio + clic de SAM 3 | Motor (CPU) |
+| 5. Revision | `precodificar N --aplicar` (worker), `cache-importar --aplicar`; luego Label Studio + clic de SAM 3 (~0.2 s) | Worker + motor (CPU) |
 | 6. Modelo hijo | `dataset N --drive [--epochs E ...]`, worker, `registrar N --run ultimo --activar` | Worker (Kaggle: las 2 T4) |
 | 7. Mas tareas | `preetiquetar N --modo hijo` | Worker |
 | 8. Validacion | `aceptacion N`, `modelos N` | Host y contenedor |
@@ -71,6 +74,9 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
   la salida al espejo local (reconcilia la cola; lo que no vuelve queda en error para Reintentar).
 - `python xd.py kaggle-pesos [--pesos RUTA] [--aplicar]`: sube `sam3.pt` + SAM License como dataset **privado**
   `<KAGGLE_USUARIO>/xd-pesos` (una cuenta por persona; token en `~/.kaggle/access_token`). El `--aplicar` lo corre la persona.
+- `python xd.py precodificar N [--todas] [--limite K] [--aplicar]`: fotos del proyecto sin cache de SAM 3 -> trabajo
+  para el worker (un SAM 3 por GPU en Kaggle). `python xd.py cache-importar [--aplicar]` lleva la cache traida a
+  `motor/cache_sam3/`, donde la usa el clic. `python xd.py sam3-ligero [--aplicar]`: checkpoint del clic liviano.
 - `python xd.py reiniciar-motor [--precalentar --proyecto N]`, `python xd.py archivar ARCHIVO [--aplicar]` (asist_*, lote_p* o dataset_p*).
 - `motor/corregir_pares.py` (manual, en el contenedor): corrige pares de clases confundidas; lo consume `exportar_yolo --correcciones`.
 - `herramientas/`: `inventario.ps1` (que datos hay), `limpiar.ps1` (vaciar datos, con reporte; `-Aplicar` borra) y
@@ -85,7 +91,9 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
 
 ## Problemas conocidos
 
-- En CPU, cargar SAM 3 tarda de 3 a 7 minutos y codificar una foto, unos 20 s. `GET /estado` muestra
+- Clic sin respuesta en una foto: no esta precodificada (modo liviano). `GET /estado` -> `cache_disco.ultimo_motivo`
+  y la UI (Pasos externos) lo dicen; precodifica el proyecto. En modo `completo` (o el SAM 3 semantico de la cola de
+  respaldo) cargar SAM 3 en CPU tarda de 3 a 7 minutos y codificar una foto ~20 s. `GET /estado` muestra
   `semantico_esperando_carga`, `semantico_cargando` y `precodificacion_en_pausa`: una cola quieta no es un bloqueo.
 - Los dos SAM 3 (semantico e interactivo) pueden convivir si alguien etiqueta durante un lote: unos 9 GB.
   Docker necesita 10 GB o mas (`.wslconfig`).

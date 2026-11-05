@@ -114,3 +114,18 @@ los pesos actuales, se construye desde `sam3.pt` (82 s).
 | RAM estable / pico | 2.7 / 5.5 GB | 0.8 / 3.7 GB | **0.4 / 0.46 GB** |
 | Clic con cache | 0.11 s | 0.16 s | 0.31 s el primero, **0.16 s** despues |
 | Mascaras | referencia | IoU 1.0 | **IoU 1.0, misma confianza** |
+
+## 7. Prueba real (P.3.7, 05/11/2026; proyecto de prueba con 40 fotos reales de plumas y desarmadores, 1280x720)
+
+| Que | Medido |
+| --- | --- |
+| Precodificar 40 fotos en Kaggle (2 T4, 20 por GPU) | 43.7 s el trabajo: carga de SAM 3 ~15 s por GPU + 0.71-0.82 s por foto; 4.3 MB por foto (173.5 MB) |
+| Pre-etiquetado SAM 3 de 40 fotos (2 T4) | 65.5 s el trabajo: carga ~33 s por GPU + 1.1-1.8 s por foto |
+| Kernel completo del primer envio (los dos trabajos) | 149 s (sha de `sam3.pt` 26 s, instalacion 11 s) |
+| Carga del interactivo en el motor (laptop) | **4 s** (antes 3-7 min) |
+| Clic en foto precodificada (primera vez en esa foto) | **0.2-0.7 s** (cache de disco 0.0-0.2 s) |
+| Clic repetido en la misma foto | 0.1 s |
+| Clic en foto sin precodificar | sin respuesta y sin bloqueo; aviso en el log, `/estado` y Pasos externos |
+
+Error encontrado y corregido: al juntar las partes, `os.replace` no puede mover de `/tmp` a `/kaggle/working` (discos
+distintos en Kaggle); ahora `shutil.move`. El reintento (`trabajos --reintentar`) y un nuevo envio lo resolvieron.

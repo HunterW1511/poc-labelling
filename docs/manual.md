@@ -13,7 +13,8 @@ y solo escribe cuando lo confirmas.
    - `python ui.py` y abre http://127.0.0.1:8090 (deja esa consola abierta).
 3. Label Studio esta en http://127.0.0.1:8080.
 
-La primera vez que se usa SAM 3 tras arrancar, el motor tarda de 3 a 7 minutos en cargarlo (CPU). Es normal.
+El clic de SAM 3 carga en unos segundos (modo liviano), pero solo responde en fotos **precodificadas** por el worker
+(seccion 2.5).
 
 ### Donde corre lo pesado (el "worker")
 Lo dice `TRANSPORTE` en tu `.env` (instalacion en README.md):
@@ -62,9 +63,11 @@ La carpeta de tipo negativo es fondo SIN objetos. Nunca personas al fondo de nin
 3. **Importar predicciones** (`lote-importar --fijar-version`).
 
 ### 2.5 Revisar en Label Studio
+Antes, una vez por tanda de fotos nuevas: **precodificar** (`python xd.py precodificar N --aplicar`), pasarlo por el
+worker y `python xd.py cache-importar --aplicar`. Asi el clic no codifica en la laptop (de 20-40 s a ~0.2 s).
 Abre el proyecto, revisa cada tarea de la muestra y corrige. Para agregar un objeto: elige la etiqueta y haz clic
-sobre el objeto (SAM 3 interactivo dibuja el poligono). El primer clic puede decir "modelo cargando": espera y
-vuelve a hacer clic. El KPI es el conteo exacto por foto: que no falte ni sobre ningun objeto.
+sobre el objeto (SAM 3 interactivo dibuja el poligono). Si una foto no dibuja nada, no esta precodificada (lo dice
+**Pasos externos**). El KPI es el conteo exacto por foto: que no falte ni sobre ningun objeto.
 
 ### 2.6 Entrenar el modelo hijo
 1. **Exportar dataset** (`dataset N --drive`).
@@ -92,7 +95,8 @@ una captura, `q` sale. `--backend pt` usa PyTorch en vez de OpenVINO.
 ## 4. Problemas frecuentes
 | Sintoma | Causa probable | Que hacer |
 | --- | --- | --- |
-| El motor tarda minutos en responder | Esta cargando SAM 3 en CPU | `python xd.py estado`: si `calentando` o `semantico_cargando` estan en True, esperar |
+| El clic no dibuja nada | La foto no esta precodificada (Pasos externos: "Clic: foto sin precodificar") | `precodificar N --aplicar`, Enviar/Traer de Kaggle y `cache-importar --aplicar` |
+| El motor tarda minutos en responder | Modo `completo` o SAM 3 semantico cargando en CPU | `python xd.py estado`: si `calentando` o `semantico_cargando` estan en True, esperar |
 | La cola no baja | Espera de carga, no bloqueo | Mira `semantico_esperando_carga` en `estado`; si todo esta en False y no hay log nuevo, ver README (py-spy) |
 | "Crear proyecto" no aparece | La spec tiene errores o es `-ref` | **Validar spec** y corrige lo que diga |
 | Colab: "Torch not compiled with CUDA" | El entorno no es GPU | Entorno de ejecucion -> Cambiar tipo -> T4 GPU y repetir celda 1 |
