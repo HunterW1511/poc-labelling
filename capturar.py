@@ -116,10 +116,30 @@ def main():
 
     print(f"\nGuardadas en esta sesion: {len(guardadas)}")
     w = max(14, *(len(f["carpeta"]) for f in filas))
+    completas = 0
     for f in filas:
         n = cuentas[f["carpeta"]]
-        print(f"  {f['carpeta']:<{w}} {n:>4}/{f['fotos']:<4} {'OK' if n >= f['fotos'] else 'faltan ' + str(f['fotos'] - n)}")
-    if guardadas:
+        estado = "OK" if n >= f["fotos"] else f"faltan {f['fotos'] - n}"
+        print(f"  {f['carpeta']:<{w}} {n:>4}/{f['fotos']:<4} {estado}")
+        if n >= f["fotos"]:
+            completas += 1
+    
+    # P.5.3: sincronizar automaticamente si todas las carpetas estan completas
+    if completas == len(filas):
+        print("\nTodas las carpetas completas. Sincronizar con Label Studio? [S/n] ", end="", flush=True)
+        respuesta = input().strip().lower()
+        if respuesta in ("", "s", "si"):
+            print(f"Ejecutando: python xd.py sincronizar {a.slug}")
+            import subprocess
+            rc = subprocess.call(["python", str(xd.RAIZ / "xd.py"), "sincronizar", a.slug])
+            if rc == 0:
+                print("OK: sincronizacion completa")
+            else:
+                print(f"AVISO: sincronizar salio con rc={rc}")
+        else:
+            print("Sincronizacion omitida. Para sincronizar manualmente:")
+            print(f"  python xd.py sincronizar {a.slug}")
+    elif guardadas:
         print(f"\nPara que entren a Label Studio:  python xd.py sincronizar {a.slug}")
 
 
