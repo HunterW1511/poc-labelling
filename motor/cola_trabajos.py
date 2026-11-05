@@ -4,7 +4,7 @@ Uso: con = abrir(ruta); t = crear(con, "preetiquetado", "lote_p3_x.zip", proyect
 import re, sqlite3, time
 from pathlib import Path
 
-ESQUEMA = 2                               # 1: P.1 | 2: P.2.7b (operador, envio, tabla envios)
+ESQUEMA = 3                               # 1: P.1 | 2: P.2.7b (operador, envio, tabla envios) | 3: P.4.3 (grupo)
 TIPOS = ("asistente", "preetiquetado", "entrenamiento", "precodificacion")
 ESTADOS = ("pendiente", "enviado", "en_proceso", "listo", "importado", "error", "archivado")
 TRANSICIONES = {
@@ -41,6 +41,10 @@ CREATE TABLE envios (
 CREATE INDEX trabajos_envio ON trabajos (envio);
 """
 ESTADOS_ENVIO = ("lanzado", "corriendo", "terminado", "fallido", "traido")
+# P.4.3: campo grupo (varios trabajos de un mismo lote original, por ejemplo lote_p13_..._t01 y _t02)
+_DDL_3 = """
+ALTER TABLE trabajos ADD COLUMN grupo TEXT;
+"""
 
 
 class Conflicto(ValueError):
@@ -85,6 +89,11 @@ def abrir(ruta, timeout=10.0):
         with con:
             con.executescript(_DDL_2)
             con.execute("PRAGMA user_version = 2")
+        ver = 2
+    if ver < 3:                                    # migracion 2 -> 3: agrega campo grupo
+        with con:
+            con.executescript(_DDL_3)
+            con.execute("PRAGMA user_version = 3")
     return con
 
 
@@ -127,7 +136,7 @@ def eventos(con, id):
     return [dict(r) for r in con.execute("SELECT * FROM eventos WHERE trabajo = ? ORDER BY id", (id,))]
 
 
-def crear(con, tipo, archivo, proyecto=None, slug=None, estado="pendiente", detalle=None, ahora=None):
+def crear(con, tipo, archivo, proyecto=None, slug=None, estado="pendiente", grupo=None, detalle=None, ahora=None):
     """Registra un trabajo. Idempotente por (tipo, archivo): si ya existe lo devuelve sin tocarlo.
     -> (trabajo, nuevo)"""
     if tipo not in TIPOS:
@@ -139,8 +148,8 @@ def crear(con, tipo, archivo, proyecto=None, slug=None, estado="pendiente", deta
         proyecto = int(proyecto)
     f = _ahora(ahora)
     with con:
-        cur = con.execute("INSERT OR IGNORE INTO trabajos (tipo, proyecto, slug, estado, archivo, creado, actualizado)"
-                          " VALUES (?, ?, ?, ?, ?, ?, ?)", (tipo, proyecto, slug, estado, archivo, f, f))
+        cur = con.execute("INSERT OR IGNORE INTO trabajos (tipo, proyecto, slug, estado, archivo, grupo, creado, actualizado)"
+                          " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (tipo, proyecto, slug, estado, archivo, grupo, f, f))
         if cur.rowcount == 0:
             return buscar(con, tipo, archivo), False
         _evento(con, cur.lastrowid, None, estado, f, detalle)

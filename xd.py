@@ -82,6 +82,18 @@ def _transporte():
     return transporte.elegir(ENV, RAIZ)
 
 
+def _extraer_grupo(zp, archivo_meta):
+    """P.4.3: lee el campo grupo del manifiesto.json o trabajo.json dentro del zip. -> str o None."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(zp, "r") as z:
+            contenido = z.read(archivo_meta).decode("utf-8")
+            meta = json.loads(contenido)
+            return meta.get("grupo")
+    except Exception:
+        return None
+
+
 # ----------------------------------------------------------------- comandos
 def cmd_estado(a):
     ls = intentar(http, "GET", LS + "/health", timeout=5)
@@ -158,7 +170,8 @@ def cmd_lote_exportar(a):
     if not zips:
         raise SystemExit("No encontre rutas de zip en la salida de exportar_lote.py")
     for zp in zips:
-        _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto)
+        grupo = _extraer_grupo(zp, "manifiesto.json")
+        _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto, grupo=grupo)
         print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
         _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
     print(_siguiente_externo(T, "python xd.py lote-importar"))
@@ -238,7 +251,8 @@ def cmd_precodificar(a):
     if not zips:
         raise SystemExit("No encontre rutas de zip en la salida de exportar_pre.py")
     for zp in zips:
-        _en_cola(zp.name, _q_crear, "precodificacion", zp.name, "pendiente", proyecto=a.proyecto)
+        grupo = _extraer_grupo(zp, "trabajo.json")
+        _en_cola(zp.name, _q_crear, "precodificacion", zp.name, "pendiente", proyecto=a.proyecto, grupo=grupo)
         print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
         _en_cola(zp.name, _q_enviado, "precodificacion", zp.name)
     print(_siguiente_externo(T, "python xd.py cache-importar --aplicar"))
@@ -780,7 +794,8 @@ def cmd_worker(a):
                         avisos.append(f"{f.name}: esta en el espejo pero no en la cola (python xd.py trabajos --reconciliar --aplicar)")
             print(f"kernel {kernel} (PRIVADO, GPU T4) | operador {u} | credencial {cred}")
             for t, c, f in filas:
-                print(f"  {t['id']:>4} {t['tipo']:<16}{f.name}  ({f.stat().st_size / 1e6:.1f} MB)")
+                ginfo = f" | grupo {t['grupo']}" if t.get('grupo') else ""
+                print(f"  {t['id']:>4} {t['tipo']:<16}{f.name}  ({f.stat().st_size / 1e6:.1f} MB){ginfo}")
             for v in avisos:
                 print(f"AVISO: {v}")
             if not filas:
@@ -794,31 +809,60 @@ def cmd_worker(a):
                 print(f"SOLO REPORTE: {len(filas)} trabajo(s); --aplicar sube el envio (dataset privado "
                       f"{u}/{K.SLUG_ENVIOS}, borra sus versiones viejas) y lanza el kernel")
                 return 0
-            nombre = f"envio_{time.strftime('%Y%m%d-%H%M%S')}"
-            carpeta, kcarp = _kaggle_dir() / "envio", _kaggle_dir() / "kernel"
-            try:
-                K.armar_envio([(c, f) for _, c, f in filas], carpeta, u, nombre, u)
-                ds = f"{u}/{K.SLUG_ENVIOS}"
-                t0 = time.time()
-                rc, out = K.subir_envio(carpeta, bool(K.estado_dataset(ds)), nombre)
-                print(K.ocultar(out)[-1500:])
-                if rc:
-                    raise SystemExit(f"no se pudo subir el envio (rc {rc}); nada cambio en la cola")
-                subida = round(time.time() - t0, 1)
-                listo = K.esperar_listo(ds)
-                if listo is None:
-                    raise SystemExit(f"{ds} no quedo listo; reintenta worker --enviar mas tarde (nada cambio en la cola)")
-                K.armar_kernel(RAIZ / "motor" / "lanzador.py", kcarp, u)
-                rc, out = K.push_kernel(kcarp, limite_s=a.limite * 60)
-                print(K.ocultar(out)[-1500:])
-                if rc:
-                    raise SystemExit(f"no se pudo lanzar el kernel (rc {rc}); nada cambio en la cola")
-            finally:
-                shutil.rmtree(carpeta, ignore_errors=True)
-                shutil.rmtree(kcarp, ignore_errors=True)
-            C.crear_envio(con, nombre, "kaggle", u, [t["id"] for t, _, _ in filas])
-            C.marcar_envio(con, nombre, "lanzado", f"subida {subida} s; dataset listo tras {listo} s")
-            print(f"OK {nombre}: subida {subida} s | dataset listo tras {listo} s | kernel lanzado")
+            # P.4.3: separar trabajos por trozo si tienen grupo
+            grupos = {}
+            for t, c, f in filas:
+                g = t.get("grupo")
+                if g:
+                    grupos.setdefault(g, {"t01": [], "t02": [], "sin": []})
+                    if "_t01.zip" in f.name:
+                        grupos[g]["t01"].append((t, c, f))
+                    elif "_t02.zip" in f.name:
+                        grupos[g]["t02"].append((t, c, f))
+                    else:
+                        grupos[g]["sin"].append((t, c, f))
+                else:
+                    grupos.setdefault(None, {"sin": []})
+                    grupos[None]["sin"].append((t, c, f))
+            envios_a_lanzar = []
+            for g, ts in grupos.items():
+                if g and ts["t01"]:
+                    envios_a_lanzar.append(("t01", ts["t01"]))
+                    if ts["t02"]:
+                        envios_a_lanzar.append(("t02", ts["t02"]))
+                    if ts["sin"]:
+                        envios_a_lanzar.append(("sin", ts["sin"]))
+                else:
+                    envios_a_lanzar.append(("unico", ts["sin"]))
+            if len(envios_a_lanzar) > 1:
+                print(f"P.4: {len(envios_a_lanzar)} envios escalonados (trozo 1 primero, luego el resto)")
+            for idx, (etiqueta, trabajos) in enumerate(envios_a_lanzar, 1):
+                nombre = f"envio_{time.strftime('%Y%m%d-%H%M%S')}" + (f"_{etiqueta}" if len(envios_a_lanzar) > 1 else "")
+                carpeta, kcarp = _kaggle_dir() / "envio", _kaggle_dir() / "kernel"
+                print(f"\nEnvio {idx}/{len(envios_a_lanzar)}: {nombre} ({len(trabajos)} trabajo(s))")
+                try:
+                    K.armar_envio([(c, f) for _, c, f in trabajos], carpeta, u, nombre, u)
+                    ds = f"{u}/{K.SLUG_ENVIOS}"
+                    t0 = time.time()
+                    rc, out = K.subir_envio(carpeta, bool(K.estado_dataset(ds)), nombre)
+                    print(K.ocultar(out)[-1500:])
+                    if rc:
+                        raise SystemExit(f"no se pudo subir el envio {nombre} (rc {rc}); nada cambio en la cola")
+                    subida = round(time.time() - t0, 1)
+                    listo = K.esperar_listo(ds)
+                    if listo is None:
+                        raise SystemExit(f"{ds} no quedo listo tras {nombre}; reintenta worker --enviar mas tarde (nada cambio en la cola)")
+                    K.armar_kernel(RAIZ / "motor" / "lanzador.py", kcarp, u)
+                    rc, out = K.push_kernel(kcarp, limite_s=a.limite * 60)
+                    print(K.ocultar(out)[-1500:])
+                    if rc:
+                        raise SystemExit(f"no se pudo lanzar el kernel {nombre} (rc {rc}); nada cambio en la cola")
+                finally:
+                    shutil.rmtree(carpeta, ignore_errors=True)
+                    shutil.rmtree(kcarp, ignore_errors=True)
+                C.crear_envio(con, nombre, "kaggle", u, [t["id"] for t, _, _ in trabajos])
+                C.marcar_envio(con, nombre, "lanzado", f"subida {subida} s; dataset listo tras {listo} s")
+                print(f"OK {nombre}: subida {subida} s | dataset listo tras {listo} s | kernel lanzado")
             print("Siguiente:  python xd.py worker --estado  (hasta 'complete')  y luego  python xd.py worker --traer --aplicar")
             return 0
         # --traer
@@ -1004,8 +1048,8 @@ def _q_aviso(t, texto):
     print(f"AVISO cola: trabajo {t['id']} ({t['archivo']}) esta en {t['estado']}: {texto}")
 
 
-def _q_crear(C, con, tipo, archivo, estado, proyecto=None, slug=None):
-    t, nuevo = C.crear(con, tipo, archivo, proyecto=proyecto, slug=slug, estado=estado)
+def _q_crear(C, con, tipo, archivo, estado, proyecto=None, slug=None, grupo=None):
+    t, nuevo = C.crear(con, tipo, archivo, proyecto=proyecto, slug=slug, estado=estado, grupo=grupo)
     if not nuevo and estado == "enviado" and t["estado"] == "pendiente":
         t = C.mover(con, t["id"], "enviado")
     return t

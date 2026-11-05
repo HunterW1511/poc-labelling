@@ -206,9 +206,9 @@ def test_migracion_1_a_2_conserva_trabajos():
             c.execute("PRAGMA user_version = 1")
             c.commit()
         with closing(C.abrir(ruta)) as con:
-            assert con.execute("PRAGMA user_version").fetchone()[0] == 2
+            assert con.execute("PRAGMA user_version").fetchone()[0] == 3    # P.4.3: llega hasta esquema 3
             tr = C.buscar(con, "preetiquetado", "lote_p1_a.zip")
-            assert tr["estado"] == "enviado" and tr["envio"] is None and tr["operador"] is None
+            assert tr["estado"] == "enviado" and tr["envio"] is None and tr["operador"] is None and tr["grupo"] is None
             assert [x["archivo"] for x in C.por_enviar(con)] == ["lote_p1_a.zip"]
             e = C.crear_envio(con, "envio_1", "kaggle", "emi", [tr["id"]])
             assert e["estado"] == "lanzado" and C.por_enviar(con) == []
