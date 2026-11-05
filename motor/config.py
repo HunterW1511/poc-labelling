@@ -33,6 +33,11 @@ DEVICE = (os.environ.get("MOTOR_DEVICE") or "auto").strip().lower()
 
 # Modo interactivo (dependen de la RAM/CPU del equipo)
 PREVIAS = _int("MOTOR_PREVIAS", 6)
+# P.3.5: liviano = SAM 3 sin image encoder (carga ~1 s, ~0.4 GB) y el clic solo con la cache que precodifica el worker;
+# completo = como antes de P.3 (carga 3-7 min, codifica en la CPU la foto que falte)
+INTERACTIVO = (os.environ.get("MOTOR_INTERACTIVO") or "liviano").strip().lower()
+if INTERACTIVO not in ("liviano", "completo"):
+    raise SystemExit(f"MOTOR_INTERACTIVO={INTERACTIVO!r}: liviano o completo")
 CACHE_MAX = _int("MOTOR_CACHE_MAX", 8)
 
 
@@ -48,7 +53,7 @@ def resumen():
     """Para logs y diagnostico: nunca incluye el token."""
     return {"LS_URL": LS_URL, "token": "***" + LS_API_KEY[-4:], "SAM3_MODEL": SAM3_MODEL,
             "sam3_existe": Path(SAM3_MODEL).exists(), "DATOS": str(DATOS), "DEVICE": DEVICE,
-            "device_real": dispositivo(), "PREVIAS": PREVIAS, "CACHE_MAX": CACHE_MAX}
+            "device_real": dispositivo(), "PREVIAS": PREVIAS, "CACHE_MAX": CACHE_MAX, "INTERACTIVO": INTERACTIVO}
 
 
 if __name__ == "__main__":

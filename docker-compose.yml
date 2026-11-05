@@ -74,6 +74,7 @@ services:
       MOTOR_DEVICE: ${MOTOR_DEVICE:-auto}
       MOTOR_PREVIAS: ${MOTOR_PREVIAS:-6}
       MOTOR_CACHE_MAX: ${MOTOR_CACHE_MAX:-8}
+      MOTOR_INTERACTIVO: ${MOTOR_INTERACTIVO:-liviano}
     volumes:
       - motor_data:/data
       - ./sam3.pt:/models/sam3.pt:ro

@@ -296,6 +296,11 @@ def _q_cache_importada(C, con, lotes, dest):
         print(f"Cola: {t['archivo']} -> importado ({len(claves)} fotos con cache)")
 
 
+def cmd_sam3_ligero(a):
+    """P.3.5: extrae (una vez) el checkpoint del SAM 3 interactivo sin image encoder para el hub liviano."""
+    return en_motor("sam3_ligero.py", *(["--aplicar"] if a.aplicar else []))[0]
+
+
 def cmd_dataset(a):
     extra = [x for k in ENTRENAMIENTO for x in ((f"--{k.replace('_', '-')}", getattr(a, k, "")) if getattr(a, k, "") else ())]
     rc, out = en_motor("exportar_yolo.py", a.proyecto, "--formato", a.formato, "--val", a.val, *(["--correcciones", a.correcciones] if a.correcciones else []), *extra)
@@ -1250,6 +1255,9 @@ def main():
     p.add_argument("--limite", type=int, default=0, help="maximo de fotos")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_precodificar)
+    p = sub.add_parser("sam3-ligero", help="P.3.5: checkpoint del clic sin image encoder (~47 MB, carga en ~1 s)")
+    p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
+    p.set_defaults(f=cmd_sam3_ligero)
     p = sub.add_parser("cache-importar", help="P.3: lleva la cache de SAM 3 que trajo el worker al hub (motor/cache_sam3)")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_cache_importar)

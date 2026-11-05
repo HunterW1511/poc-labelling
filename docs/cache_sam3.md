@@ -93,3 +93,24 @@ El lanzador parte los grupos SAM 3 (pre-etiquetado y precodificacion) en un subp
 - Codificar una foto en la laptop: 22.4 s (lo que la cache evita).
 - El modelo sin backbone igual lee el `sam3.pt` completo (3.45 GB) para quedarse con 12 M de parametros: de ahi los
   82 s y el pico de 3.7 GB. Un checkpoint propio del interactivo (~50 MB, extraido una vez) deberia bajarlo a segundos.
+
+## 6. Decision e implementacion (P.3.5, 05/11/2026)
+
+**Opcion B: el hub usa siempre el interactivo liviano** (`MOTOR_INTERACTIVO=liviano`, defecto). Una foto sin cache
+no se codifica en el hub: el clic no responde y el motor avisa "foto sin precodificar: `xd.py precodificar N` y
+Enviar a Kaggle" (`/estado` -> `cache_disco.ultimo_motivo`, `clic_origen.sin_cache`). La precodificacion local queda
+apagada. `MOTOR_INTERACTIVO=completo` vuelve al comportamiento anterior (carga de minutos, codifica en la CPU) para
+cuando no haya worker.
+
+**Checkpoint propio** (`motor/sam3_ligero.py`, `xd.py sam3-ligero [--aplicar]`): el `state_dict` del interactivo sin
+image encoder, extraido una vez de `sam3.pt` y guardado como `motor/cache_sam3/sam3_interactivo_<sha12>.pt` con el sha de
+`sam3.pt`; se carga con `strict=True` sobre la arquitectura construida sin leer `sam3.pt`. Si falta o no coincide con
+los pesos actuales, se construye desde `sam3.pt` (82 s).
+
+| Medido en la laptop | Completo | Sin backbone desde `sam3.pt` | **Checkpoint propio** |
+| --- | --- | --- | --- |
+| Extraer (una vez) | - | - | 58 s; 11.7 M parametros, 47 MB |
+| Carga | 345 s | 82 s | **1 s** (0.7 s el `load_state_dict`) |
+| RAM estable / pico | 2.7 / 5.5 GB | 0.8 / 3.7 GB | **0.4 / 0.46 GB** |
+| Clic con cache | 0.11 s | 0.16 s | 0.31 s el primero, **0.16 s** despues |
+| Mascaras | referencia | IoU 1.0 | **IoU 1.0, misma confianza** |

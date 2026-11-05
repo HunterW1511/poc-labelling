@@ -21,7 +21,7 @@ _lock = threading.Lock()          # predictor principal (clics)
 _pre_lock = threading.Lock()      # predictor de pre-codificacion
 _cache_lock = threading.Lock()
 _ev = threading.Event()           # despierta al hilo de pre-codificacion
-_est = {"pred": None, "imgsz": None, "ruta": None, "calentando": False, "pre": None, "hilo_pre": None}
+_est = {"pred": None, "imgsz": None, "ruta": None, "calentando": False, "pre": None, "hilo_pre": None, "origen": None}
 _obj = {"proyecto": None, "tid": 0, "perfil": None}
 _cache = OrderedDict()            # ruta -> (features, dataset)
 _en_proceso = set()
@@ -29,8 +29,9 @@ _lista = {"t": 0.0, "proyecto": None, "tareas": []}
 cola.al_vaciar.append(_ev.set)    # L.10: al vaciarse la cola semantica, reanudar la precodificacion
 PISO_REL = 0.1                    # una alternativa cuenta si su conf >= 10% de la mejor (el area filtra el resto)
 MIN_PIX = 20                      # en clic se ignora area_min del perfil; solo se descartan mascaras < 20 px
-from config import CACHE_MAX, CACHE_SAM3, PREVIAS, SAM3_MODEL   # (.env) tareas por delante | imagenes en RAM
-_origen = {"actual": 0, "cache": 0, "disco": 0, "codificada": 0}   # de donde salio la imagen de cada clic (/estado)
+from config import CACHE_MAX, CACHE_SAM3, INTERACTIVO, PREVIAS, SAM3_MODEL   # (.env)
+_origen = {"actual": 0, "cache": 0, "disco": 0, "codificada": 0, "sin_cache": 0}   # de donde salio cada clic (/estado)
+SIN_CACHE = "foto sin precodificar: python xd.py precodificar {p} --aplicar y Enviar a Kaggle (o MOTOR_INTERACTIVO=completo)"
 _disco = {"sha": None, "calculando": False, "version": None, "ultimo_motivo": None}
 
 
@@ -98,10 +99,18 @@ def _predictor_sin_candado(imgsz):
         _est["pred"], _est["ruta"], _est["pre"] = None, None, None
         with _cache_lock:
             _cache.clear()
-        p = SAM3Predictor(overrides=cola.overrides_sam3(imgsz, 0.01))
-        p.set_image(np.zeros((imgsz, imgsz, 3), np.uint8))       # fuerza la carga de pesos
-        _est["pred"], _est["imgsz"] = p, imgsz
-        log.info("SAM 3 interactivo listo (imgsz=%d, device=%s) en %.0fs", imgsz, cola.dispositivo(), time.time() - t0)
+        if INTERACTIVO == "liviano":                    # P.3.5: sin image encoder; pesos del checkpoint propio
+            import sam3_ligero
+            p = sam3_ligero.predictor_liviano()(overrides=cola.overrides_sam3(imgsz, 0.01))
+            p.setup_model(verbose=False)
+            origen = type(p).origen
+        else:
+            p = SAM3Predictor(overrides=cola.overrides_sam3(imgsz, 0.01))
+            p.set_image(np.zeros((imgsz, imgsz, 3), np.uint8))       # fuerza la carga de pesos
+            origen = "sam3.pt completo"
+        _est["pred"], _est["imgsz"], _est["origen"] = p, imgsz, origen
+        log.info("SAM 3 interactivo %s listo (imgsz=%d, device=%s, %s) en %.0fs", INTERACTIVO, imgsz,
+                 cola.dispositivo(), origen, time.time() - t0)
     return _est["pred"]
 
 
@@ -167,6 +176,8 @@ def _activar(p, ruta):
         _guardar(ruta, p.features, p.dataset)
         _est["ruta"] = ruta
         return "disco"
+    if INTERACTIVO == "liviano":                         # P.3.5: sin encoder no se codifica en el hub
+        return "sin_cache"
     p.set_image(ruta)
     _guardar(ruta, p.features, p.dataset)
     _est["ruta"] = ruta
@@ -204,7 +215,8 @@ def _apuntar(proyecto, tid, perfil):
 
 def _puede_precodificar():
     """L.10: con trabajo semantico en cola la precodificacion cede la CPU (en 2 nucleos competir lo hace 2-4x mas lento)."""
-    return _est["pred"] is not None and not _est["calentando"] and not cola.ocupada()
+    return (INTERACTIVO == "completo" and _est["pred"] is not None and not _est["calentando"]
+            and not cola.ocupada())                      # P.3.5: el liviano no codifica (la cache viene del worker)
 
 
 def _bucle_pre():
@@ -300,6 +312,10 @@ def responder(task, context, perfil, version, label_config="", proyecto=None):
         p = _predictor(perfil["imgsz"])
         origen = _activar(p, ruta)
         _origen[origen] = _origen.get(origen, 0) + 1
+        if origen == "sin_cache":
+            _disco["ultimo_motivo"] = SIN_CACHE.format(p=proyecto if proyecto is not None else task.get("project"))
+            log.warning("tarea %s | %s", task["id"], _disco["ultimo_motivo"])
+            return []
         t1 = time.time()
         p.args.conf = 0.0                                  # devolver siempre las 3 alternativas
         r = p(points=[puntos], labels=[etiquetas], multimask_output=True)   # anidado = un solo objeto

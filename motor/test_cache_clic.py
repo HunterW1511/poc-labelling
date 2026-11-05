@@ -28,8 +28,9 @@ class Pred:
 
 with tempfile.TemporaryDirectory() as t:
     t = Path(t)
-    viejo = (I.CACHE_SAM3, dict(I._disco), dict(I._est))
+    viejo = (I.CACHE_SAM3, dict(I._disco), dict(I._est), I.INTERACTIVO)
     try:
+        I.INTERACTIVO = "completo"                       # P.3.4: como antes, codifica lo que falta
         I.CACHE_SAM3 = t / "cache"
         I._disco.update(sha=SHA_M, version=VER, calculando=False, ultimo_motivo=None)
         I._est.update(imgsz=IMGSZ, ruta=None)
@@ -57,7 +58,18 @@ with tempfile.TemporaryDirectory() as t:
         I._cache.clear()
         I._est["ruta"] = None
         assert I._activar(p, str(con)) == "codificada"
+        # P.3.5 liviano: sin image encoder; la foto sin cache no se codifica en el hub y no hay precodificacion local
+        I.INTERACTIVO = "liviano"
+        I._disco["sha"], I._disco["calculando"] = SHA_M, False
+        I._cache.clear()
+        I._est["ruta"] = None
+        n = Pred.codificadas
+        assert I._activar(p, str(con)) == "disco"
+        assert I._activar(p, str(sin)) == "sin_cache" and Pred.codificadas == n, "liviano: nunca codifica"
+        I._est["pred"], I._est["calentando"] = object(), False
+        assert not I._puede_precodificar(), "liviano: sin precodificacion local"
     finally:
+        I.INTERACTIVO = viejo[3]
         I.CACHE_SAM3 = viejo[0]
         I._disco.clear()
         I._disco.update(viejo[1])
