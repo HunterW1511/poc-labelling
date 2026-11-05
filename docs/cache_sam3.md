@@ -78,3 +78,18 @@ El lanzador parte los grupos SAM 3 (pre-etiquetado y precodificacion) en un subp
 | Disco del hub | Presupuesto y limpieza con reporte |
 | Pickle malicioso | `weights_only=True` |
 | El cliente cambia la foto | Otra foto = otro sha = otra clave (nunca se usa una cache equivocada) |
+
+## 5. Medido en el spike de P.3.5 (05/11/2026, hub = laptop i7-7600U, CPU, imgsz 644, `motor/_p35/`, no versionado)
+
+| | SAM 3 completo | Sin backbone (`with_backbone=False`) |
+| --- | --- | --- |
+| Carga | 345 s | **82 s** |
+| RAM estable / pico al cargar | 2.7 GB / 5.5 GB | **0.8 GB** / 3.7 GB |
+| Parametros | todo SAM 3 | 12 M (sin image encoder) |
+| Clic desde la cache de disco | cargar 0.10 s + clic 0.11 s | cargar 0.42 s + clic 0.37 s; **siguientes 0.16 s** |
+| Mascaras frente al completo con features en memoria | IoU 1.0 (f16) | **IoU 1.0, misma confianza** |
+
+- Formas reales de las features a imgsz 644: `(1,256,46,46)`, `(1,32,184,184)`, `(1,64,92,92)`; archivo f16 4.3 MB.
+- Codificar una foto en la laptop: 22.4 s (lo que la cache evita).
+- El modelo sin backbone igual lee el `sam3.pt` completo (3.45 GB) para quedarse con 12 M de parametros: de ahi los
+  82 s y el pico de 3.7 GB. Un checkpoint propio del interactivo (~50 MB, extraido una vez) deberia bajarlo a segundos.
