@@ -1251,6 +1251,82 @@ def _reconciliar(C, a):
             con.close()
 
 
+def cmd_daemon(a):
+    """Demonio que consulta Kaggle cada N min y si hay trabajos externos OK, los importa."""
+    import subprocess
+    import time
+    
+    # Importar módulos necesarios
+    sys.path.insert(0, str(RAIZ / "motor"))
+    import cola_trabajos as C
+    import kaggle_xd as K
+    
+    intervalo = a.intervalo * 60  # convertir a segundos
+    ciclo = 0
+    
+    usuario = K.usuario(ENV)
+    kernel = f"{usuario}/{ENV.get('KAGGLE_KERNEL', 'xd-worker')}"
+    
+    print(f"daemon: iniciando polling cada {a.intervalo} min (Ctrl+C para detener)")
+    print(f"daemon: kernel {kernel}")
+    
+    try:
+        while True:
+            ciclo += 1
+            ahora = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"\n[{ahora}] Ciclo {ciclo}: consultando Kaggle...")
+            
+            # 1. Consultar estado del kernel
+            est, msg = K.estado_kernel(kernel)
+            print(f"  kernel: {est or 'sin ejecuciones'}" + (f" | {msg}" if msg else ""))
+            
+            # 2. Si hay un envío terminado OK, actualizar estado y reconciliar
+            con = C.abrir(TRABAJOS_DB)
+            try:
+                ult = C.ultimo_envio(con, "kaggle")
+                if ult and ult["estado"] in ("lanzado", "corriendo"):
+                    nuevo = ENVIO_DE_KERNEL.get(est or "")
+                    if nuevo and nuevo != ult["estado"]:
+                        print(f"  envío {ult['nombre']}: {ult['estado']} -> {nuevo}")
+                        C.marcar_envio(con, ult["nombre"], nuevo, msg or None)
+                
+                # 3. Importar trabajos listos (estado="listo") sin resultado aún
+                listos = [
+                    (x["id"], x["archivo"])
+                    for x in C.listar(con, estado="listo")
+                    if x.get("resultado") is None
+                ]
+                
+                if listos:
+                    print(f"daemon: {len(listos)} trabajo(s) listo(s) pendiente(s) de importar")
+                    for tid, arch in listos:
+                        # Solo precodificaciones: importar_pred.py
+                        if "lote_" in arch or "pre_" in arch:
+                            print(f"  → importando predicciones {tid} ({arch})...")
+                            rc_i = subprocess.call(["python", str(RAIZ / "motor" / "importar_pred.py"), arch], cwd=RAIZ)
+                            if rc_i != 0:
+                                print(f"AVISO: importar_pred.py {arch} rc={rc_i}")
+                        else:
+                            print(f"  → {tid} ({arch}): tipo no auto-importable, requiere intervención manual")
+                else:
+                    print("daemon: no hay trabajos listos pendientes de importar")
+            finally:
+                con.close()
+            
+            if a.solo_una_vez:
+                print("daemon: --solo-una-vez activo, saliendo")
+                break
+            
+            print(f"daemon: durmiendo {a.intervalo} min hasta el próximo ciclo...")
+            time.sleep(intervalo)
+    
+    except KeyboardInterrupt:
+        print("\ndaemon: detenido por usuario")
+        return 0
+    
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(prog="xd.py", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1430,6 +1506,12 @@ def main():
     p.add_argument("--horas", type=float, default=24, help="aviso si un trabajo lleva mas de estas horas enviado")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_trabajos)
+
+    p = sub.add_parser("daemon", help="P.5: encadenamiento automatico (polling de Kaggle, traer e importar)")
+    p.add_argument("--intervalo", type=int, default=5, help="minutos entre chequeos (defecto 5)")
+    p.add_argument("--solo-una-vez", action="store_true", help="chequea una vez y sale (testing)")
+    p.set_defaults(f=cmd_daemon)
+
     a = ap.parse_args()
     sys.exit(a.f(a))
 
