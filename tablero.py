@@ -342,8 +342,21 @@ def externos():
     for t in v["trabajos"]:
         if t["tipo"] == "entrenamiento" and t["estado"] in ESPERA:
             ultimo_ds[t["proyecto"]] = max(ultimo_ds.get(t["proyecto"], ""), t["archivo"])
+    # P.4: agrupar trabajos por grupo para mostrar "trozo N de M"
+    grupos_info = {}
+    for t in v["trabajos"]:
+        g = t.get("grupo")
+        if g:
+            grupos_info.setdefault(g, {"trozos": set(), "estados": {}})
+            # Detectar número de trozo del nombre del archivo
+            if "_t01.zip" in t["archivo"] or "_t01_" in t["archivo"]:
+                grupos_info[g]["trozos"].add(1)
+            elif "_t02.zip" in t["archivo"] or "_t02_" in t["archivo"]:
+                grupos_info[g]["trozos"].add(2)
+            grupos_info[g]["estados"][t["archivo"]] = t["estado"]
     for t in sorted(v["trabajos"], key=lambda t: (t["tipo"], t["proyecto"] or 0, t["archivo"])):
         tipo, n, slug, est = t["tipo"], t["proyecto"], t["slug"], t["estado"]
+        grupo = t.get("grupo")
         if est in ESPERA:
             if tipo == "entrenamiento" and t["archivo"] != ultimo_ds.get(n):
                 out["avisos"].append(f"{t['archivo']}: dataset viejo en espera (Colab entrena el ultimo); archivalo")
@@ -356,14 +369,33 @@ def externos():
                 texto = KAGGLE.get(envios.get(env) if env else None, KAGGLE[None]).format(envio=env)
             if est == "pendiente":
                 texto = "El zip no llego a Drive: repite el comando que lo creo. " + texto
+            if grupo and grupo in grupos_info:
+                total = len(grupos_info[grupo]["trozos"])
+                if "_t01.zip" in t["archivo"] or "_t01_" in t["archivo"]:
+                    texto = f"Trozo 1 de {total}: " + texto
+                elif "_t02.zip" in t["archivo"] or "_t02_" in t["archivo"]:
+                    texto = f"Trozo 2 de {total}: " + texto
             it.append(_item(tipo, t["archivo"], "en_espera", texto, n=n, slug=slug, id=t["id"]))
         elif est == "listo" and tipo == "preetiquetado":
-            it.append(_item(tipo, t["resultado"], "listo", "Predicciones listas: importalas a Label Studio", n=n,
+            desc = "Predicciones listas: importalas a Label Studio"
+            if grupo and grupo in grupos_info:
+                total = len(grupos_info[grupo]["trozos"])
+                listos = sum(1 for e in grupos_info[grupo]["estados"].values() if e in ("listo", "importado"))
+                desc = f"Trozo {listos}/{total} listo: importa a Label Studio"
+            it.append(_item(tipo, t["resultado"], "listo", desc, n=n,
                             id=t["id"], accion={"accion": "lote-importar", "opciones": {"--fijar-version": True}}))
         elif est == "listo" and tipo == "entrenamiento":
             it.append(_item(tipo, t["resultado"], "listo", "Corrida terminada con metricas.json: registrala", n=n,
                             id=t["id"], accion={"accion": "registrar", "n": n,
                                                 "opciones": {"--run": t["resultado"], "--activar": True}}))
+        elif est == "listo" and tipo == "precodificacion":  # P.4: precodificaciones listas
+            desc = "Cache de SAM 3 lista: importa al hub"
+            if grupo and grupo in grupos_info:
+                total = len(grupos_info[grupo]["trozos"])
+                listos = sum(1 for e in grupos_info[grupo]["estados"].values() if e in ("listo", "importado"))
+                desc = f"Cache trozo {listos}/{total}: importa al hub"
+            it.append(_item(tipo, t["archivo"], "listo", desc, n=n, id=t["id"],
+                            accion={"accion": "cache-importar", "opciones": {}}))
         elif est == "error":
             if tipo == "asistente" and _asist_vivos(v, slug)[-1]["archivo"] != t["archivo"]:
                 continue                             # ya hay un trabajo mas nuevo del mismo slug
