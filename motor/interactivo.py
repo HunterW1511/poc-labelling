@@ -1,7 +1,9 @@
 """Modo interactivo: clic en Label Studio -> SAM3Predictor por punto -> poligono.
 - SAM 3 da 3 mascaras alternativas; se elige con el atributo clic del <Label>: grande | chico | (mayor conf).
 - Pre-codificacion CONTINUA: un hilo mantiene codificadas las siguientes PREVIAS tareas sin anotar (orden
-  por id) con un segundo predictor que COMPARTE el modelo; cache en RAM (features + dataset)."""
+  por id) con un segundo predictor que COMPARTE el modelo; cache en RAM (features + dataset).
+- P.3.4: antes de codificar se busca la cache de DISCO (motor/cache_sam3, precodificada por el worker en GPU):
+  setup_source(foto) + p.features. Orden: RAM -> disco -> codificar. docs/cache_sam3.md"""
 import logging, threading, time
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
@@ -10,6 +12,7 @@ import cv2
 import numpy as np
 import requests
 
+import cache_sam3
 import cola
 import pipeline
 
@@ -26,7 +29,58 @@ _lista = {"t": 0.0, "proyecto": None, "tareas": []}
 cola.al_vaciar.append(_ev.set)    # L.10: al vaciarse la cola semantica, reanudar la precodificacion
 PISO_REL = 0.1                    # una alternativa cuenta si su conf >= 10% de la mejor (el area filtra el resto)
 MIN_PIX = 20                      # en clic se ignora area_min del perfil; solo se descartan mascaras < 20 px
-from config import CACHE_MAX, PREVIAS   # dependen del equipo (.env): tareas por delante | imagenes en cache
+from config import CACHE_MAX, CACHE_SAM3, PREVIAS, SAM3_MODEL   # (.env) tareas por delante | imagenes en RAM
+_origen = {"actual": 0, "cache": 0, "disco": 0, "codificada": 0}   # de donde salio la imagen de cada clic (/estado)
+_disco = {"sha": None, "calculando": False, "version": None, "ultimo_motivo": None}
+
+
+def _version_ul():
+    if _disco["version"] is None:
+        from importlib.metadata import version
+        _disco["version"] = version("ultralytics")
+    return _disco["version"]
+
+
+def _sha_modelo():
+    """sha de sam3.pt para la clave de la cache. Si no esta memorizado se calcula en segundo plano (~50 s en la
+    laptop) y mientras tanto el clic sigue como siempre (codifica)."""
+    if _disco["sha"] is None:
+        _disco["sha"] = cache_sam3.sha_memorizado(SAM3_MODEL, CACHE_SAM3 / "modelo.json")
+    if _disco["sha"] is None and not _disco["calculando"]:
+        _disco["calculando"] = True
+
+        def _f():
+            try:
+                _disco["sha"] = cache_sam3.sha_modelo(SAM3_MODEL, CACHE_SAM3 / "modelo.json")
+                log.info("sha de sam3.pt calculado: %s", _disco["sha"][:12])
+            except Exception:
+                log.exception("no pude calcular el sha de sam3.pt: sin cache de disco")
+            finally:
+                _disco["calculando"] = False
+        threading.Thread(target=_f, daemon=True, name="sam3-sha").start()
+    return _disco["sha"]
+
+
+def _de_disco(p, ruta):
+    """Pone en p la cache de disco de la foto si hay una valida. -> True si la uso."""
+    sha = _sha_modelo()
+    if not sha or not CACHE_SAM3.is_dir():
+        return False
+    p.setup_source(ruta)                                 # dataset local (src_shape) y _bb_feat_sizes de esta foto
+    feats, motivo = cache_sam3.buscar(CACHE_SAM3, ruta, _est["imgsz"], sha, _version_ul(),
+                                      espacial=cache_sam3.espacial_de(p._bb_feat_sizes), device=p.device)
+    if feats is None:
+        if motivo != "sin cache":
+            _disco["ultimo_motivo"] = motivo
+            log.warning("%s: %s; se codifica", ruta, motivo)
+        return False
+    p.features = feats
+    return True
+
+
+def _hay_en_disco(ruta):
+    sha = _disco["sha"]
+    return bool(sha) and cache_sam3.hay(CACHE_SAM3, ruta, _est["imgsz"], sha, _version_ul())
 
 
 # ----------------------------------------------------------------- modelos
@@ -109,6 +163,10 @@ def _activar(p, ruta):
         p.features, p.dataset = v
         _est["ruta"] = ruta
         return "cache"
+    if _de_disco(p, ruta):                               # P.3.4: precodificada por el worker
+        _guardar(ruta, p.features, p.dataset)
+        _est["ruta"] = ruta
+        return "disco"
     p.set_image(ruta)
     _guardar(ruta, p.features, p.dataset)
     _est["ruta"] = ruta
@@ -159,7 +217,7 @@ def _bucle_pre():
                 falta = None
                 for t in _siguientes(proyecto, tid):
                     ruta = cola.get_local_path(t["data"][perfil["campo_imagen"]], task_id=t["id"])
-                    if ruta != _est["ruta"] and _en_cache(ruta) is None:
+                    if ruta != _est["ruta"] and _en_cache(ruta) is None and not _hay_en_disco(ruta):
                         falta = (t["id"], ruta)
                         break
                 if falta is None:
@@ -241,6 +299,7 @@ def responder(task, context, perfil, version, label_config="", proyecto=None):
     with _lock:
         p = _predictor(perfil["imgsz"])
         origen = _activar(p, ruta)
+        _origen[origen] = _origen.get(origen, 0) + 1
         t1 = time.time()
         p.args.conf = 0.0                                  # devolver siempre las 3 alternativas
         r = p(points=[puntos], labels=[etiquetas], multimask_output=True)   # anidado = un solo objeto

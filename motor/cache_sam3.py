@@ -30,23 +30,30 @@ def archivo(carpeta, c):
     return Path(carpeta) / f"{c}.pt"
 
 
+def _firma(ruta_pt):
+    st = Path(ruta_pt).stat()
+    return {"ruta": str(ruta_pt), "bytes": st.st_size, "mtime": int(st.st_mtime)}
+
+
+def sha_memorizado(ruta_pt, memo):
+    """sha de sam3.pt si el memo sigue valido (mismo tamano y mtime); None si hay que calcularlo. No calcula nada."""
+    try:
+        m = json.loads(Path(memo).read_text(encoding="utf-8"))
+        return m["sha256"] if {k: m.get(k) for k in ("ruta", "bytes", "mtime")} == _firma(ruta_pt) else None
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def sha_modelo(ruta_pt, memo=None):
-    """sha256 de sam3.pt; con memo (json) no se recalcula mientras no cambien tamano y mtime (3.45 GB: ~30-60 s)."""
-    ruta_pt = Path(ruta_pt)
-    st = ruta_pt.stat()
-    firma = {"ruta": str(ruta_pt), "bytes": st.st_size, "mtime": int(st.st_mtime)}
+    """sha256 de sam3.pt; con memo (json) no se recalcula mientras no cambien tamano y mtime (3.45 GB: ~50 s)."""
     if memo:
-        memo = Path(memo)
-        try:
-            m = json.loads(memo.read_text(encoding="utf-8"))
-            if {k: m.get(k) for k in firma} == firma and m.get("sha256"):
-                return m["sha256"]
-        except (OSError, ValueError):
-            pass
+        sha = sha_memorizado(ruta_pt, memo)
+        if sha:
+            return sha
     sha = sha256_archivo(ruta_pt)
     if memo:
-        memo.parent.mkdir(parents=True, exist_ok=True)
-        memo.write_text(json.dumps({**firma, "sha256": sha}, indent=1), encoding="utf-8")
+        Path(memo).parent.mkdir(parents=True, exist_ok=True)
+        Path(memo).write_text(json.dumps({**_firma(ruta_pt), "sha256": sha}, indent=1), encoding="utf-8")
     return sha
 
 
@@ -74,9 +81,9 @@ def guardar(ruta, paquete):
     return ruta
 
 
-def cargar(ruta, c, formas_esperadas=None, dtype=None, device="cpu"):
+def cargar(ruta, c, formas_esperadas=None, dtype=None, device="cpu", espacial=None):
     """-> features listas para p.features. ValueError si el archivo no corresponde (y entonces se codifica como siempre).
-    formas_esperadas: las de la foto actual (de setup_source / _bb_feat_sizes), si se conocen."""
+    formas_esperadas: formas completas; espacial: solo (alto, ancho) de [image_embed, high_res 0, high_res 1]."""
     import torch
     p = torch.load(ruta, map_location="cpu", weights_only=True)
     if not isinstance(p, dict) or p.get("esquema") != ESQUEMA:
@@ -86,6 +93,38 @@ def cargar(ruta, c, formas_esperadas=None, dtype=None, device="cpu"):
     f = p["features"]
     if formas_esperadas is not None and formas(f) != [tuple(x) for x in formas_esperadas]:
         raise ValueError(f"{Path(ruta).name}: formas {formas(f)} distintas de las esperadas {formas_esperadas}")
+    if espacial is not None and [x[-2:] for x in formas(f)] != [tuple(x) for x in espacial]:
+        raise ValueError(f"{Path(ruta).name}: tamanos {[x[-2:] for x in formas(f)]} distintos de {espacial}")
     dt = dtype or torch.float32
     return {"image_embed": f["image_embed"].to(device=device, dtype=dt),
             "high_res_feats": [t.to(device=device, dtype=dt) for t in f["high_res_feats"]]}
+
+
+def espacial_de(bb_feat_sizes):
+    """SAM2Predictor._bb_feat_sizes (escalas 1/4, 1/2, 1) -> orden de formas(): [image_embed, high_res 0, high_res 1]."""
+    b = [tuple(int(v) for v in x) for x in bb_feat_sizes]
+    return [b[2], b[0], b[1]]
+
+
+def buscar(carpeta, foto, imgsz, sha_m, version_ul, espacial=None, device="cpu"):
+    """Cache de la foto local, si hay una que valga. -> (features o None, motivo). Nunca lanza: ante cualquier problema
+    el clic codifica como siempre."""
+    try:
+        c = clave(sha256_archivo(foto), imgsz, sha_m, version_ul)
+    except (OSError, ValueError) as e:
+        return None, f"sin clave: {e}"
+    f = archivo(carpeta, c)
+    if not f.is_file():
+        return None, "sin cache"
+    try:
+        return cargar(f, c, espacial=espacial, device=device), "disco"
+    except Exception as e:                       # archivo danado, otra version de torch, formas: se codifica
+        return None, f"cache no valida: {type(e).__name__}: {e}"
+
+
+def hay(carpeta, foto, imgsz, sha_m, version_ul):
+    """Hay archivo de cache para la foto (sin cargarlo)."""
+    try:
+        return archivo(carpeta, clave(sha256_archivo(foto), imgsz, sha_m, version_ul)).is_file()
+    except (OSError, ValueError):
+        return False

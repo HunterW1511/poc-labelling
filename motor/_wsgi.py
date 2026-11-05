@@ -21,6 +21,11 @@ def estado():
         "calentando": e["calentando"], "imgsz": e["imgsz"], "device": config.dispositivo(),
         "cache": len(interactivo._cache), "cache_max": config.CACHE_MAX,
         "precodificando": len(interactivo._en_proceso),
+        "clic_origen": dict(interactivo._origen),          # P.3.4: actual | cache (RAM) | disco | codificada
+        "cache_disco": {"sha_sam3": (interactivo._disco["sha"] or "")[:12] or None,
+                        "calculando_sha": interactivo._disco["calculando"],
+                        "archivos": len(list(config.CACHE_SAM3.glob("*.pt"))) if config.CACHE_SAM3.is_dir() else 0,
+                        "ultimo_motivo": interactivo._disco["ultimo_motivo"]},
         "cola": cola._cola.qsize(), "cola_pendientes": len(cola._pendientes),
         "semantico_cargado": cola._sam["pred"] is not None,
         "semantico_cargando": cola._sam.get("cargando", False),

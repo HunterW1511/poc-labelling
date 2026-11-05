@@ -244,6 +244,58 @@ def cmd_precodificar(a):
     return 0
 
 
+def cmd_cache_importar(a):
+    """P.3.4: mueve la cache que trajo el worker (transporte: lotes/cache/*.pt) a motor/cache_sam3, donde la usa el clic.
+    Las precodificaciones cuyo indice queda completo pasan a importado en la cola."""
+    sys.path.insert(0, str(RAIZ / "motor"))
+    import cache_sam3 as CS
+    T = _transporte()
+    lotes = T.carpeta("lotes")
+    src = lotes / "cache" if lotes else None
+    dest = RAIZ / "motor" / "cache_sam3"
+    fs = sorted(src.glob("*.pt")) if src and src.is_dir() else []
+    malos = [f for f in fs if not CS.CLAVE.match(f.stem)]
+    nuevos = [f for f in fs if f not in malos and not (dest / f.name).is_file()]
+    repetidos = [f for f in fs if f not in malos and f not in nuevos]
+    mb = sum(f.stat().st_size for f in nuevos) / 1e6
+    print(f"origen {src} ({T.nombre}) -> {dest}")
+    print(f"  nuevos {len(nuevos)} ({mb:.1f} MB) | ya en el hub {len(repetidos)} | nombre invalido {len(malos)}")
+    for f in malos[:5]:
+        print(f"  AVISO: {f.name} no tiene forma de clave de cache; se deja donde esta")
+    if not a.aplicar:
+        if nuevos or repetidos:
+            print("SOLO REPORTE: --aplicar los mueve al hub (los repetidos se quitan del transporte)")
+        return 0
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in nuevos:
+        tmp = dest / (f.name + ".tmp")
+        shutil.copy2(f, tmp)
+        tmp.replace(dest / f.name)
+        f.unlink()
+    for f in repetidos:
+        f.unlink()
+    print(f"OK {len(nuevos)} archivo(s) en {dest}")
+    _en_cola("precodificaciones", _q_cache_importada, lotes, dest)
+    return 0
+
+
+def _q_cache_importada(C, con, lotes, dest):
+    """Precodificaciones en listo cuyo indice (<stem>_cache.json) ya esta entero en el hub -> importado."""
+    for t in C.listar(con, tipo="precodificacion", estado="listo"):
+        f = lotes / (t["resultado"] or "")
+        try:
+            claves = [x["clave"] for x in json.loads(f.read_text(encoding="utf-8"))["fotos"]]
+        except (OSError, ValueError, KeyError, TypeError):
+            print(f"AVISO cola: no puedo leer {f.name}; trabajo {t['id']} sigue en listo")
+            continue
+        falta = [c for c in claves if not (dest / f"{c}.pt").is_file()]
+        if falta:
+            print(f"AVISO cola: a {t['archivo']} le faltan {len(falta)} de {len(claves)} archivos; sigue en listo")
+            continue
+        C.mover(con, t["id"], "importado", desde="listo", detalle=f"{len(claves)} archivos de cache en el hub")
+        print(f"Cola: {t['archivo']} -> importado ({len(claves)} fotos con cache)")
+
+
 def cmd_dataset(a):
     extra = [x for k in ENTRENAMIENTO for x in ((f"--{k.replace('_', '-')}", getattr(a, k, "")) if getattr(a, k, "") else ())]
     rc, out = en_motor("exportar_yolo.py", a.proyecto, "--formato", a.formato, "--val", a.val, *(["--correcciones", a.correcciones] if a.correcciones else []), *extra)
@@ -261,8 +313,8 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador")
-TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia")      # necesitan el contenedor (torch, rutas /app)
+              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador", "cache_sam3")
+TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia", "cache_clic")      # necesitan el contenedor (torch, rutas /app)
 
 
 def _correr(cmd, timeout=600):
@@ -1198,6 +1250,9 @@ def main():
     p.add_argument("--limite", type=int, default=0, help="maximo de fotos")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_precodificar)
+    p = sub.add_parser("cache-importar", help="P.3: lleva la cache de SAM 3 que trajo el worker al hub (motor/cache_sam3)")
+    p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
+    p.set_defaults(f=cmd_cache_importar)
     p = sub.add_parser("dataset", help="exporta las anotaciones validadas a un dataset YOLO (zip)")
     p.add_argument("proyecto", type=int)
     p.add_argument("--formato", choices=["det", "seg", "ambos"], default="det")
