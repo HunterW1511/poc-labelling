@@ -1,7 +1,8 @@
 """L.2 / D.2 / D.6: exporta un lote para procesar en Colab (GPU), sin tunel.
 Uso (en el contenedor): python /app/exportar_lote.py <proyecto> [--limite N] [--tareas ids] [--todas]
-       [--muestra N [--semilla S] [--minimo M] [--prioridad archivo.json]] [--modo auto|sam3|hijo] [--reporte]
+       [--muestra N [--semilla S] [--minimo M] [--prioridad archivo.json]] [--modo auto|sam3|hijo] [--trozo K] [--reporte]
 --modo auto: modelo hijo si el proyecto tiene uno activo en el registro; si no, SAM 3 semantico.
+--trozo K (P.4): si K>0 y hay mas de K tareas, genera 2 zips (_t01 con K fotos, _t02 con el resto).
 Genera /app/lotes/lote_p<id>_<version>_<fecha>.zip con manifiesto.json, fotos/, codigo/ y (hijo) modelo/."""
 import argparse, datetime, json, zipfile
 from collections import Counter
@@ -58,6 +59,7 @@ def main():
     ap.add_argument("--prioridad", default="", help="json con ids (o reporte de diagnostico.py)")
     ap.add_argument("--modo", choices=["auto", "sam3", "hijo"], default="auto")
     ap.add_argument("--hijo-conf", type=float, default=0.25, help="confianza minima del modelo hijo")
+    ap.add_argument("--trozo", type=int, default=0, help="P.4: si >0 y hay mas tareas, genera 2 zips (t01 + t02)")
     ap.add_argument("--reporte", action="store_true", help="no crear el zip; solo listar")
     a = ap.parse_args()
 
@@ -108,27 +110,38 @@ def main():
 
     out = LOTES
     out.mkdir(exist_ok=True)
-    zp = out / f"lote_p{a.proyecto}_{ver}_{datetime.datetime.now():%Y%m%d-%H%M}.zip"
-    man = []
-    with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
-        for i, t in enumerate(tareas, 1):
-            ruta = get_local_path(t["data"][campo], task_id=t["id"])
-            nombre = f"fotos/{t['id']}_{Path(ruta).name}"
-            z.write(ruta, nombre)
-            man.append({"id": t["id"], "foto": nombre})
-            print(f"  [{i}/{len(tareas)}] tarea {t['id']}")
-        for c in CODIGO:
-            z.write(APP / c, f"codigo/{c}")
-        meta = {"proyecto": a.proyecto, "version": ver, "modo": modo, "perfil": perfil, "label_config": cfg,
-                "creado": datetime.datetime.now().isoformat(timespec="seconds"), "tareas": man}
-        if hijo:
-            z.write(hijo[1], "modelo/best.pt")
-            meta["hijo"] = {"nombre": hijo[0], "archivo": "modelo/best.pt", "conf": a.hijo_conf, "imgsz": hijo[2]}
-            meta["limites"] = limites_por_clase(cfg)
-        z.writestr("manifiesto.json", json.dumps(meta, ensure_ascii=True, indent=1))
-        z.writestr("trabajo.json", json.dumps(encabezado("preetiquetado", zp.stem, proyecto=a.proyecto,
-                                                         creado=meta["creado"]), ensure_ascii=True, indent=1))
-    print(f"OK {len(man)} tareas | modo {modo} | version {ver} | {zp.stat().st_size / 1e6:.1f} MB -> {zp}")
+    base = f"lote_p{a.proyecto}_{ver}_{datetime.datetime.now():%Y%m%d-%H%M}"
+    trozos = []
+    if a.trozo > 0 and len(tareas) > a.trozo:
+        trozos = [(tareas[:a.trozo], 1), (tareas[a.trozo:], 2)]
+        print(f"P.4: {len(tareas)} tareas en 2 trozos: {len(trozos[0][0])} + {len(trozos[1][0])}")
+    else:
+        trozos = [(tareas, 0)]
+    for trozo_t, num in trozos:
+        zp = out / (f"{base}_t{num:02d}.zip" if num else f"{base}.zip")
+        man = []
+        with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
+            for i, t in enumerate(trozo_t, 1):
+                ruta = get_local_path(t["data"][campo], task_id=t["id"])
+                nombre = f"fotos/{t['id']}_{Path(ruta).name}"
+                z.write(ruta, nombre)
+                man.append({"id": t["id"], "foto": nombre})
+                if i % 20 == 0 or i == len(trozo_t):
+                    print(f"  [{i}/{len(trozo_t)}] tarea {t['id']}")
+            for c in CODIGO:
+                z.write(APP / c, f"codigo/{c}")
+            meta = {"proyecto": a.proyecto, "version": ver, "modo": modo, "perfil": perfil, "label_config": cfg,
+                    "creado": datetime.datetime.now().isoformat(timespec="seconds"), "tareas": man}
+            if num:
+                meta["trozo"], meta["trozos"], meta["grupo"] = num, len(trozos), base
+            if hijo:
+                z.write(hijo[1], "modelo/best.pt")
+                meta["hijo"] = {"nombre": hijo[0], "archivo": "modelo/best.pt", "conf": a.hijo_conf, "imgsz": hijo[2]}
+                meta["limites"] = limites_por_clase(cfg)
+            z.writestr("manifiesto.json", json.dumps(meta, ensure_ascii=True, indent=1))
+            z.writestr("trabajo.json", json.dumps(encabezado("preetiquetado", zp.stem, proyecto=a.proyecto,
+                                                             creado=meta["creado"]), ensure_ascii=True, indent=1))
+        print(f"OK {len(man)} tareas | modo {modo} | version {ver} | {zp.stat().st_size / 1e6:.1f} MB -> {zp}")
 
 
 if __name__ == "__main__":

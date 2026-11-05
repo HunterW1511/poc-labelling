@@ -1,5 +1,6 @@
 """P.3.3: exporta un trabajo de PRECODIFICACION (fotos de un proyecto sin cache de SAM 3 en el hub) para el worker.
-Uso (en el contenedor): python /app/exportar_pre.py <proyecto> [--todas] [--limite N] [--reporte]
+Uso (en el contenedor): python /app/exportar_pre.py <proyecto> [--todas] [--limite N] [--trozo K] [--reporte]
+--trozo K (P.4): si K>0 y hay mas de K fotos, genera 2 zips (_t01 con K fotos, _t02 con el resto).
 Genera /app/lotes/pre_p<id>_<fecha>.zip con fotos/, fotos.json (tarea, foto, sha256), trabajo.json (imgsz, sha de
 sam3.pt y version de ultralytics: el worker las comprueba) y codigo/ (worker.py, cache_sam3.py)."""
 import argparse, datetime, json, zipfile
@@ -23,6 +24,7 @@ def main():
     ap.add_argument("proyecto", type=int)
     ap.add_argument("--todas", action="store_true", help="incluir fotos que ya tienen cache")
     ap.add_argument("--limite", type=int, default=0, help="maximo de fotos (0 = sin limite)")
+    ap.add_argument("--trozo", type=int, default=0, help="P.4: si >0 y hay mas fotos, genera 2 zips (t01 + t02)")
     ap.add_argument("--reporte", action="store_true", help="no crear el zip; solo contar")
     a = ap.parse_args()
 
@@ -54,22 +56,35 @@ def main():
               + (" ..." if len(faltan) > 50 else ""))
         return
     LOTES.mkdir(exist_ok=True)
-    zp = LOTES / f"pre_p{a.proyecto}_{datetime.datetime.now():%Y%m%d-%H%M%S}.zip"
-    fotos = []
-    with zipfile.ZipFile(zp, "w", zipfile.ZIP_STORED) as z:      # las fotos ya vienen comprimidas
-        for i, (tid, ruta, sha) in enumerate(faltan, 1):
-            nombre = f"fotos/{tid}_{ruta.name}"
-            z.write(ruta, nombre)
-            fotos.append({"tarea": tid, "foto": nombre, "sha": sha})
-            if i % 50 == 0:
-                print(f"  [{i}/{len(faltan)}]")
-        for c in CODIGO:
-            z.write(APP / c, f"codigo/{c}")
-        z.writestr("fotos.json", json.dumps({"esquema": 1, "fotos": fotos}, ensure_ascii=True, indent=1))
-        par = {"imgsz": imgsz, "sha_modelo": sha_m, "ultralytics": ver}
-        z.writestr("trabajo.json", json.dumps(encabezado("precodificacion", zp.stem, proyecto=a.proyecto,
-                                                         parametros=par), ensure_ascii=True, indent=1))
-    print(f"OK {len(fotos)} fotos | {zp.stat().st_size / 1e6:.1f} MB -> {zp}")
+    base = f"pre_p{a.proyecto}_{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    trozos = []
+    if a.trozo > 0 and len(faltan) > a.trozo:
+        trozos = [(faltan[:a.trozo], 1), (faltan[a.trozo:], 2)]
+        print(f"P.4: {len(faltan)} fotos en 2 trozos: {len(trozos[0][0])} + {len(trozos[1][0])}")
+    else:
+        trozos = [(faltan, 0)]
+    for trozo_f, num in trozos:
+        zp = LOTES / (f"{base}_t{num:02d}.zip" if num else f"{base}.zip")
+        fotos = []
+        with zipfile.ZipFile(zp, "w", zipfile.ZIP_STORED) as z:      # las fotos ya vienen comprimidas
+            for i, (tid, ruta, sha) in enumerate(trozo_f, 1):
+                nombre = f"fotos/{tid}_{ruta.name}"
+                z.write(ruta, nombre)
+                fotos.append({"tarea": tid, "foto": nombre, "sha": sha})
+                if i % 50 == 0 or i == len(trozo_f):
+                    print(f"  [{i}/{len(trozo_f)}]")
+            for c in CODIGO:
+                z.write(APP / c, f"codigo/{c}")
+            meta = {"esquema": 1, "fotos": fotos}
+            if num:
+                meta["trozo"], meta["trozos"], meta["grupo"] = num, len(trozos), base
+            z.writestr("fotos.json", json.dumps(meta, ensure_ascii=True, indent=1))
+            par = {"imgsz": imgsz, "sha_modelo": sha_m, "ultralytics": ver}
+            enc = encabezado("precodificacion", zp.stem, proyecto=a.proyecto, parametros=par)
+            if num:
+                enc["grupo"] = base
+            z.writestr("trabajo.json", json.dumps(enc, ensure_ascii=True, indent=1))
+        print(f"OK {len(fotos)} fotos | {zp.stat().st_size / 1e6:.1f} MB -> {zp}")
 
 
 if __name__ == "__main__":

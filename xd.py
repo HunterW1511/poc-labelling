@@ -154,13 +154,13 @@ def cmd_lote_exportar(a):
     rc, out = en_motor("exportar_lote.py", *args)
     if rc:
         return rc                                   # incluye "no hay tareas pendientes"
-    m = re.search(r"-> (\S+\.zip)", out)
-    if not m:
-        raise SystemExit("No encontre la ruta del zip en la salida de exportar_lote.py")
-    zp = LOTES_LOCAL / PurePosixPath(m.group(1)).name
-    _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto)
-    print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
-    _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
+    zips = [LOTES_LOCAL / PurePosixPath(m.group(1)).name for m in re.finditer(r"-> (\S+\.zip)", out)]
+    if not zips:
+        raise SystemExit("No encontre rutas de zip en la salida de exportar_lote.py")
+    for zp in zips:
+        _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto)
+        print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
+        _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
     print(_siguiente_externo(T, "python xd.py lote-importar"))
     return 0
 
@@ -184,7 +184,7 @@ def _prioridad(valor, proyecto):
 
 
 def cmd_preetiquetar(a):
-    extra = ["--muestra", a.muestra, "--semilla", a.semilla, "--minimo", a.minimo] + \
+    extra = ["--muestra", a.muestra, "--semilla", a.semilla, "--minimo", a.minimo, "--trozo", a.trozo] + \
             _prioridad(a.prioridad, a.proyecto)
     if not a.aplicar:
         args = [a.proyecto, *extra, "--modo", a.modo, "--reporte"] + (["--todas"] if a.todas else [])
@@ -224,7 +224,8 @@ def cmd_precodificar(a):
     """P.3.3: fotos del proyecto sin cache de SAM 3 -> trabajo de precodificacion para el worker (GPU)."""
     T = _transporte()
     T.requerir("lotes")
-    args = [a.proyecto] + (["--todas"] if a.todas else []) + (["--limite", a.limite] if a.limite else [])
+    args = [a.proyecto] + (["--todas"] if a.todas else []) + (["--limite", a.limite] if a.limite else []) + \
+           ["--trozo", a.trozo]
     if not a.aplicar:
         rc = en_motor("exportar_pre.py", *args, "--reporte")[0]
         if rc == 0:
@@ -233,13 +234,13 @@ def cmd_precodificar(a):
     rc, out = en_motor("exportar_pre.py", *args)
     if rc:
         return rc
-    m = re.search(r"-> (\S+\.zip)", out)
-    if not m:
-        raise SystemExit("No encontre la ruta del zip en la salida de exportar_pre.py")
-    zp = LOTES_LOCAL / PurePosixPath(m.group(1)).name
-    _en_cola(zp.name, _q_crear, "precodificacion", zp.name, "pendiente", proyecto=a.proyecto)
-    print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
-    _en_cola(zp.name, _q_enviado, "precodificacion", zp.name)
+    zips = [LOTES_LOCAL / PurePosixPath(m.group(1)).name for m in re.finditer(r"-> (\S+\.zip)", out)]
+    if not zips:
+        raise SystemExit("No encontre rutas de zip en la salida de exportar_pre.py")
+    for zp in zips:
+        _en_cola(zp.name, _q_crear, "precodificacion", zp.name, "pendiente", proyecto=a.proyecto)
+        print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
+        _en_cola(zp.name, _q_enviado, "precodificacion", zp.name)
     print(_siguiente_externo(T, "python xd.py cache-importar --aplicar"))
     return 0
 
@@ -1242,6 +1243,7 @@ def main():
     p.add_argument("--prioridad", default="", help="'ultimo' o archivo de motor/diagnosticos")
     p.add_argument("--modo", choices=["auto", "sam3", "hijo"], default="auto")
     p.add_argument("--todas", action="store_true", help="incluir tareas que ya tienen la version")
+    p.add_argument("--trozo", type=int, default=16, help="P.4: si hay mas tareas, genera 2 zips (t01 + t02); 0 = sin trozos")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_preetiquetar)
     p = sub.add_parser("lote-importar", help="sube a Label Studio los *_pred.json nuevos de Drive")
@@ -1253,6 +1255,7 @@ def main():
     p.add_argument("proyecto", type=int)
     p.add_argument("--todas", action="store_true", help="rehacer tambien las fotos que ya tienen cache")
     p.add_argument("--limite", type=int, default=0, help="maximo de fotos")
+    p.add_argument("--trozo", type=int, default=16, help="P.4: si hay mas fotos, genera 2 zips (t01 + t02); 0 = sin trozos")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_precodificar)
     p = sub.add_parser("sam3-ligero", help="P.3.5: checkpoint del clic sin image encoder (~47 MB, carga en ~1 s)")
