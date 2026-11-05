@@ -113,6 +113,63 @@ def test_envio_completo():
         assert L.VISION not in comandos
 
 
+LOTE_GPU = """import json, os
+from pathlib import Path
+def procesar(d, cache, nombre, **kw):
+    man = json.loads((Path(d) / "manifiesto.json").read_text())
+    if any(t["id"] == 99 for t in man["tareas"]):
+        raise RuntimeError("CUDA out of memory en esta parte")
+    gpu = os.environ.get("CUDA_VISIBLE_DEVICES")
+    return {"lote": nombre, "version": "v", "predicciones": [{"task": t["id"], "gpu": gpu} for t in man["tareas"]]}
+"""
+
+
+def test_dos_gpus_reparten_un_lote():
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        zips, salida, tmp = t / "input", t / "working", t / "tmp"
+        zips.mkdir()
+        L.TMP = tmp
+        tareas = [{"id": i, "foto": f"fotos/{i}.jpg"} for i in range(1, 7)]
+        fotos = {f"fotos/{i}.jpg": "x" for i in range(1, 7)}
+        man = json.dumps({"modo": "sam3", "tareas": tareas})
+        bueno = _zip(zips / "lote_p1_g.zip", "preetiquetado", {"codigo/lote.py": LOTE_GPU, "manifiesto.json": man, **fotos})
+        malo = _zip(zips / "lote_p1_m.zip", "preetiquetado", {"codigo/lote.py": LOTE_GPU, "manifiesto.json":
+                    json.dumps({"modo": "sam3", "tareas": tareas[:3] + [{"id": 99, "foto": "fotos/1.jpg"}]}), **fotos})
+        chico = _zip(zips / "lote_p1_c.zip", "preetiquetado", {"codigo/lote.py": LOTE_GPU, "manifiesto.json":
+                     json.dumps({"modo": "sam3", "tareas": tareas[:2]}), **fotos})
+        est = {e["trabajo"]: e for e in L.ejecutar({"envio": "g", "trabajos": [bueno, malo, chico]}, zips, salida, tmp,
+                                                   sh=lambda c: None, sam3_pt=t / "sam3.pt", n_gpus=2, min_partir=4)}
+        e = est["lote_p1_g"]
+        assert e["ok"] and e["entorno"]["gpus"] == 2 and [p["fotos"] for p in e["partes"]] == [3, 3], e
+        pred = json.loads((salida / "lotes" / "lote_p1_g_pred.json").read_text())["predicciones"]
+        assert [p["task"] for p in pred] == [1, 2, 3, 4, 5, 6], pred                 # completas y en orden
+        assert [p["gpu"] for p in pred] == ["0"] * 3 + ["1"] * 3                       # una parte por GPU
+        assert json.loads((salida / "lotes" / "lote_p1_g.estado.json").read_text())["ok"]
+        m = est["lote_p1_m"]                                                          # falla una parte: falla el trabajo
+        assert not m["ok"] and "parte 1" in m["error"] and "out of memory" in m["error"], m
+        assert (salida / "lotes" / "lote_p1_m_error.txt").exists() and not (salida / "lotes" / "lote_p1_m_pred.json").exists()
+        c = est["lote_p1_c"]                                                          # pocas fotos: una sola GPU
+        assert c["ok"] and "partes" not in c
+        assert not [p for p in tmp.iterdir() if "__parte" in p.name or "__salida" in p.name]   # limpia las partes
+
+
+def test_juntar_precodificacion():
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        salidas = []
+        for i in range(2):
+            s = t / f"s{i}"
+            (s / "cache").mkdir(parents=True)
+            (s / "cache" / f"c{i}.pt").write_bytes(b"x")
+            (s / "pre_p1_x_cache.json").write_text(json.dumps({"imgsz": 644, "seg": 10 + i, "fotos": [{"tarea": i}]}))
+            salidas.append(s)
+        assert L.juntar("precodificacion", "pre_p1_x", salidas, t / "out") == "pre_p1_x_cache.json"
+        idx = json.loads((t / "out" / "pre_p1_x_cache.json").read_text())
+        assert [f["tarea"] for f in idx["fotos"]] == [0, 1] and idx["seg"] == 11
+        assert sorted(f.name for f in (t / "out" / "cache").iterdir()) == ["c0.pt", "c1.pt"]
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

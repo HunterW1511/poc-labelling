@@ -126,9 +126,10 @@ envio (~1-3 min) pide **agrupar** trabajos en un mismo envio (ya lo hace `worker
 ### Dos GPU (T4 x2)
 - Entrenamiento YOLO: usa las dos (DDP, `device` auto -> `0,1`) desde P.2.8; medir en el primer entrenamiento real.
 - Ollama reparte solo entre las GPU.
-- SAM 3 (pre-etiquetado y precodificacion) procesa foto a foto: aprovechar la segunda T4 exige **dos SAM 3** (uno por
-  GPU, el lote partido en dos), y eso choca con la regla de oro 2. **Pregunta abierta** para el responsable: con
-  2 x 15 GB de VRAM y ~29 GB de RAM en Kaggle, permitir "un SAM 3 por GPU" solo en el worker, medido antes.
+- SAM 3 (pre-etiquetado y precodificacion): **desde P.3.6** el lanzador parte cada trabajo de 16 fotos o mas en un
+  tramo contiguo por GPU (enlaces duros, sin copiar fotos), lanza un subproceso con su SAM 3 por GPU
+  (`CUDA_VISIBLE_DEVICES`), y junta el resultado (`_pred.json` en orden, o el indice y la cache). Si una parte falla,
+  falla el trabajo con el error de esa parte. Regla de oro 2 enmendada (D18). Se mide 1 vs 2 GPU en P.3.7.
 Visto una vez durante la subida: un `datos/kaggle/sam3.pt` transitorio (sin enlace con el original; desaparecio solo).
 
 ## 5. Fuentes (consultadas el 03/11/2026)

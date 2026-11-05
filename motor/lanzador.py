@@ -3,7 +3,7 @@ la logica de cada trabajo esta en el worker.py que trae su zip. Lee envio.json y
 datasets xd-envios y xd-pesos), verifica el sha256 de sam3.pt, instala las versiones fijas que hagan falta, procesa
 los trabajos agrupados por modelo y escribe en /kaggle/working/{asistente,lotes,datasets,runs} con los nombres de
 siempre. Los zips se extraen en /tmp: las fotos NUNCA quedan en la salida del kernel. Probado en el host con stubs."""
-import hashlib, importlib, json, shutil, subprocess, sys, time, zipfile
+import hashlib, importlib, json, math, os, shutil, subprocess, sys, time, zipfile
 from pathlib import Path
 
 ENTRADA, SALIDA, TMP = Path("/kaggle/input"), Path("/kaggle/working"), Path("/tmp/xd")
@@ -15,6 +15,10 @@ ASISTENTE = ("pip -q install faster-whisper==1.2.1 ctranslate2==4.8.4 nvidia-cub
              "'nvidia-cudnn-cu12==9.*' nvidia-cuda-runtime-cu12")
 OLLAMA = "apt-get -qq install -y zstd lshw > /dev/null && curl -fsSL https://ollama.com/install.sh | sh"
 NECESITA_SAM3 = ("preetiquetado", "precodificacion")
+# P.3.6: estos grupos se parten por fotos entre las GPU (un subproceso y un SAM 3 por GPU); el resto usa una sola
+POR_GPU = {"preetiquetado-sam3": ("manifiesto.json", "tareas"), "preetiquetado-hijo": ("manifiesto.json", "tareas"),
+           "precodificacion": ("fotos.json", "fotos")}
+MIN_PARTIR = 16                                  # con menos fotos no compensa cargar otro SAM 3 (~30 s)
 VERIFICADO = {}                                  # ruta de sam3.pt -> sha256 ya comprobado
 
 
@@ -49,6 +53,110 @@ def verificar_pesos(pesos_json):
     return pt
 
 
+def gpus():
+    """Cuantas GPU NVIDIA ve la sesion (nvidia-smi -L; sin importar torch). 0 si no hay."""
+    try:
+        r = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=30)
+        return sum(1 for l in r.stdout.splitlines() if l.startswith("GPU ")) if r.returncode == 0 else 0
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+
+
+def partir(d, stem, grupo, n, tmp):
+    """Copia (enlaces duros) la carpeta del trabajo en n partes con el manifiesto repartido en tramos contiguos
+    (el orden se conserva al juntar). -> [(carpeta, cuantos)]"""
+    archivo, clave = POR_GPU[grupo]
+    man = json.loads((Path(d) / archivo).read_text(encoding="utf-8"))
+    items = man[clave]
+    k = math.ceil(len(items) / n)
+    partes = []
+    for i in range(n):
+        tramo = items[i * k:(i + 1) * k]
+        if not tramo:
+            break
+        di = Path(tmp) / f"{stem}__parte{i}"
+        shutil.rmtree(di, ignore_errors=True)
+        try:
+            shutil.copytree(d, di, copy_function=os.link)
+        except OSError:
+            shutil.copytree(d, di)
+        (di / archivo).unlink()                            # era un enlace al original: se reescribe aparte
+        (di / archivo).write_text(json.dumps({**man, clave: tramo}, ensure_ascii=True), encoding="utf-8")
+        partes.append((di, len(tramo)))
+    return partes
+
+
+PARTE = """import json, sys
+sys.path.insert(0, sys.argv[1])
+import worker
+op = json.loads(sys.argv[4])
+e = worker.procesar(sys.argv[2], sys.argv[3], {}, stem=op.pop("stem"), ent=worker.entorno(op.pop("proveedor")), **op)
+sys.exit(0 if e.get("ok") else 1)
+"""
+
+
+def juntar(grupo, stem, salidas, carpeta):
+    """Une los resultados de las partes en el resultado de siempre. -> nombre del resultado."""
+    if grupo.startswith("preetiquetado"):
+        res = [json.loads((s / f"{stem}_pred.json").read_text(encoding="utf-8")) for s in salidas]
+        out = {**res[0], "predicciones": [p for r in res for p in r["predicciones"]]}
+        nombre = f"{stem}_pred.json"
+        tmp = Path(carpeta) / (nombre + ".tmp")
+        tmp.write_text(json.dumps(out), encoding="utf-8")
+        tmp.replace(Path(carpeta) / nombre)
+        return nombre
+    idx = [json.loads((s / f"{stem}_cache.json").read_text(encoding="utf-8")) for s in salidas]
+    (Path(carpeta) / "cache").mkdir(parents=True, exist_ok=True)
+    for s in salidas:
+        for f in (s / "cache").glob("*.pt"):
+            os.replace(f, Path(carpeta) / "cache" / f.name)
+    out = {**idx[0], "seg": max(i.get("seg", 0) for i in idx), "fotos": [f for i in idx for f in i["fotos"]]}
+    nombre = f"{stem}_cache.json"
+    (Path(carpeta) / nombre).write_text(json.dumps(out, ensure_ascii=True, indent=1), encoding="utf-8")
+    return nombre
+
+
+def en_paralelo(d, stem, grupo, carpeta, n, tmp, op, proveedor, correr=subprocess.Popen):
+    """Un subproceso (y un SAM 3) por GPU sobre su tramo de fotos; junta lo que sale. -> estado del trabajo."""
+    t0, inicio = time.time(), time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    partes = partir(d, stem, grupo, n, tmp)
+    log(f"{stem}: {len(partes)} partes en {len(partes)} GPU ({', '.join(str(c) for _, c in partes)} fotos)")
+    procs, salidas = [], []
+    for i, (di, _) in enumerate(partes):
+        si = Path(tmp) / f"{stem}__salida{i}"
+        shutil.rmtree(si, ignore_errors=True)
+        salidas.append(si)
+        args = {**{k: (str(v) if isinstance(v, Path) else v) for k, v in op.items()}, "device": 0, "stem": stem,
+                "proveedor": proveedor}
+        env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(i)}
+        procs.append(correr([sys.executable, "-c", PARTE, str(di / "codigo"), str(di), str(si), json.dumps(args)], env=env))
+    rcs = [p.wait() for p in procs]
+    estados = [json.loads((s / f"{stem}.estado.json").read_text(encoding="utf-8"))
+               if (s / f"{stem}.estado.json").is_file() else {"ok": False, "error": f"parte sin estado (rc {rc})"}
+               for s, rc in zip(salidas, rcs)]
+    ok = all(e.get("ok") for e in estados)
+    resultado, error = None, None
+    if ok:
+        try:
+            resultado = juntar(grupo, stem, salidas, carpeta)
+        except Exception as e:
+            ok, error = False, f"no pude juntar las partes: {type(e).__name__}: {e}"
+    else:
+        error = " | ".join(f"parte {i}: {e.get('error')}" for i, e in enumerate(estados) if not e.get("ok"))
+    if error:
+        (Path(carpeta) / f"{stem}_error.txt").write_text(error + "\n", encoding="utf-8")
+    ent = {**(estados[0].get("entorno") or {}), "gpus": len(partes)}
+    est = {"esquema": 1, "trabajo": stem, "tipo": estados[0].get("tipo"), "ok": ok, "inicio": inicio,
+           "fin": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "seg": round(time.time() - t0, 1), "resultado": resultado,
+           "error": error, "entorno": ent,
+           "partes": [{"fotos": c, "seg": e.get("seg"), "ok": e.get("ok")} for (_, c), e in zip(partes, estados)]}
+    (Path(carpeta) / f"{stem}.estado.json").write_text(json.dumps(est, ensure_ascii=True, indent=1), encoding="utf-8")
+    for p in [di for di, _ in partes] + salidas:
+        shutil.rmtree(p, ignore_errors=True)
+    log(f"{'OK' if ok else 'ERROR'} {stem} en {est['seg']} s con {len(partes)} GPU -> {resultado or error}")
+    return est
+
+
 def cargar_codigo(d):
     """Siempre el codigo que trae el zip (se quitan los modulos del trabajo anterior)."""
     for m in [p.stem for p in (Path(d) / "codigo").glob("*.py")]:
@@ -63,8 +171,10 @@ def _sh(cmd):
     subprocess.run(cmd, shell=True, check=True)
 
 
-def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None, device=0, cache=None):
-    """Procesa los trabajos de envio.json. -> lista de estados (tambien en salida/envio_resultado.json)."""
+def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None, device=0, cache=None, n_gpus=None,
+             min_partir=MIN_PARTIR):
+    """Procesa los trabajos de envio.json. -> lista de estados (tambien en salida/envio_resultado.json).
+    n_gpus: None = las que vea la sesion; con 2 o mas, los trabajos SAM 3 grandes se parten (P.3.6)."""
     envio, zips, salida, tmp = dict(envio), Path(zips), Path(salida), Path(tmp)
     cache = {} if cache is None else cache
     listos, estados = {}, []
@@ -98,6 +208,9 @@ def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None,
         if grupos - {"asistente"}:
             sh(VISION)
         previo, asistente_listo = None, False
+        n_gpus = gpus() if n_gpus is None else n_gpus
+        if n_gpus > 1:
+            log(f"{n_gpus} GPU: los trabajos SAM 3 de {min_partir} fotos o mas se reparten entre ellas")
         for d, stem in orden:
             worker = cargar_codigo(d)
             g = worker.grupo(d, stem)
@@ -113,7 +226,15 @@ def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None,
                 op["sam3_pt"] = str(sam3_pt)
                 if str(sam3_pt) in VERIFICADO:
                     op["sha_modelo"] = VERIFICADO[str(sam3_pt)]
-            estados.append(worker.procesar(d, listos[stem][1], cache, stem=stem, ent=worker.entorno(proveedor), **op))
+            items = 0
+            if g in POR_GPU and n_gpus > 1:
+                archivo, clave = POR_GPU[g]
+                items = len(json.loads((d / archivo).read_text(encoding="utf-8")).get(clave) or [])
+            if items >= min_partir:
+                worker.liberar(cache)                   # el proceso principal no retiene ningun SAM 3
+                estados.append(en_paralelo(d, stem, g, listos[stem][1], n_gpus, tmp, op, proveedor))
+            else:
+                estados.append(worker.procesar(d, listos[stem][1], cache, stem=stem, ent=worker.entorno(proveedor), **op))
             previo = g
     res = {"esquema": 1, "envio": envio.get("envio"), "fin": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "estados": estados}
     (salida / "envio_resultado.json").write_text(json.dumps(res, ensure_ascii=True, indent=1), encoding="utf-8")
