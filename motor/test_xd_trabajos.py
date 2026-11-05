@@ -272,6 +272,49 @@ def test_preetiquetar_precodifica_las_mismas_tareas():
         assert not [x for x in llamadas if x[0] == "exportar_pre.py"]                 # --sin-precodificar
 
 
+def test_si_crea_el_proyecto_y_capturar_no_revienta():
+    """P.5.R2: asistente-importar --aplicar --si crea el proyecto de verdad; capturar.py no usa input() sin consola."""
+    with tempfile.TemporaryDirectory() as t:
+        raiz, drive = _preparar(Path(t))
+        bz = drive / "asistente"
+        rc, out = _correr(xd.cmd_asistente, NS(slug="conc", texto="una caja", audio="", vocabulario="", respuestas="",
+                                               nuevo=False, continuar=False, modelo=""))
+        _colab_asistente(bz, sorted(bz.glob("asist_conc_*.zip"))[-1])
+        creados, original = [], xd.cmd_crear_proyecto
+        try:
+            xd.cmd_crear_proyecto = lambda a: (creados.append((a.slug, a.aplicar)) or 0)
+            rc, out = _correr(xd.cmd_asistente_importar, NS(slug="conc", aplicar=True, forzar=False, comparar="", si=True))
+            assert rc == 0 and creados == [("conc", True)], out                          # con --aplicar, no solo reporte
+            rc, out = _correr(xd.cmd_asistente_importar, NS(slug="conc", aplicar=True, forzar=True, comparar="", si=False))
+            assert rc == 0 and len(creados) == 1 and "Siguiente:  python xd.py crear-proyecto conc" in out, out
+        finally:
+            xd.cmd_crear_proyecto = original
+    import io as io_
+    import capturar
+
+    class Consola(io_.StringIO):
+        def isatty(self):
+            return True
+
+    class Rota:
+        def isatty(self):
+            return True
+
+        def readline(self):
+            raise EOFError
+    sinc = []
+    f = lambda a: (sinc.append(a.slug) or 0)
+    buf = io_.StringIO()
+    with redirect_stdout(buf):
+        assert capturar.ofrecer_sincronizar("p", 0, 2, 2, Consola("s\n"), f) == "nada"         # sin fotos nuevas
+        assert capturar.ofrecer_sincronizar("p", 3, 2, 2, io_.StringIO(""), f) == "sugerido"   # UI: sin consola
+        assert capturar.ofrecer_sincronizar("p", 3, 1, 2, Consola("s\n"), f) == "sugerido"     # faltan carpetas
+        assert capturar.ofrecer_sincronizar("p", 3, 2, 2, Consola("n\n"), f) == "omitido"
+        assert capturar.ofrecer_sincronizar("p", 3, 2, 2, Rota(), f) == "omitido"              # nunca revienta
+        assert capturar.ofrecer_sincronizar("p", 3, 2, 2, Consola("\n"), f) == "sincronizado"
+    assert sinc == ["p"], sinc
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

@@ -348,7 +348,7 @@ def externos():
         g = t.get("grupo")
         if g:
             grupos_info.setdefault(g, {"trozos": set(), "estados": {}})
-            # Detectar número de trozo del nombre del archivo
+            # numero de trozo segun el nombre del archivo
             if "_t01.zip" in t["archivo"] or "_t01_" in t["archivo"]:
                 grupos_info[g]["trozos"].add(1)
             elif "_t02.zip" in t["archivo"] or "_t02_" in t["archivo"]:

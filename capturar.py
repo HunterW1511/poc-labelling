@@ -15,6 +15,30 @@ CADA = 5                                # fotos por cada variacion sugerida
 TITULO = "Captura (espacio guardar, n/p carpeta, g cuadricula, z deshacer, q salir)"
 
 
+def ofrecer_sincronizar(slug, nuevas, completas, total, entrada=None, sincronizar=None):
+    """P.5.R2: al salir, si hubo fotos nuevas y todas las carpetas estan completas, ofrece sincronizar; solo pregunta
+    con una consola interactiva (desde la UI no hay stdin: solo sugiere). -> sincronizado | omitido | sugerido | nada"""
+    entrada = sys.stdin if entrada is None else entrada
+    if not nuevas:
+        return "nada"
+    interactiva = bool(getattr(entrada, "isatty", lambda: False)())
+    if completas < total or not interactiva:
+        print(f"\nPara que entren a Label Studio:  python xd.py sincronizar {slug}")
+        return "sugerido"
+    print("\nTodas las carpetas completas. Sincronizar con Label Studio ahora? [S/n] ", end="", flush=True)
+    try:
+        r = entrada.readline().strip().lower()
+    except (EOFError, OSError):
+        r = "n"
+    if r not in ("", "s", "si"):
+        print(f"Sin sincronizar. Para hacerlo:  python xd.py sincronizar {slug}")
+        return "omitido"
+    from types import SimpleNamespace
+    rc = (sincronizar or xd.cmd_sincronizar)(SimpleNamespace(slug=slug))
+    print("OK: sincronizado" if rc == 0 else f"AVISO: sincronizar salio con rc {rc}")
+    return "sincronizado"
+
+
 def abrir(camara, ancho, alto):
     cap = cv2.VideoCapture(camara, cv2.CAP_DSHOW) if sys.platform == "win32" else cv2.VideoCapture(camara)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, ancho)
@@ -124,23 +148,7 @@ def main():
         if n >= f["fotos"]:
             completas += 1
     
-    # P.5.3: sincronizar automaticamente si todas las carpetas estan completas
-    if completas == len(filas):
-        print("\nTodas las carpetas completas. Sincronizar con Label Studio? [S/n] ", end="", flush=True)
-        respuesta = input().strip().lower()
-        if respuesta in ("", "s", "si"):
-            print(f"Ejecutando: python xd.py sincronizar {a.slug}")
-            import subprocess
-            rc = subprocess.call(["python", str(xd.RAIZ / "xd.py"), "sincronizar", a.slug])
-            if rc == 0:
-                print("OK: sincronizacion completa")
-            else:
-                print(f"AVISO: sincronizar salio con rc={rc}")
-        else:
-            print("Sincronizacion omitida. Para sincronizar manualmente:")
-            print(f"  python xd.py sincronizar {a.slug}")
-    elif guardadas:
-        print(f"\nPara que entren a Label Studio:  python xd.py sincronizar {a.slug}")
+    ofrecer_sincronizar(a.slug, len(guardadas), completas, len(filas))
 
 
 if __name__ == "__main__":

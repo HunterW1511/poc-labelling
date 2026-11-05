@@ -1054,36 +1054,12 @@ def cmd_asistente_importar(a):
     print(f"OK spec -> {ruta}")
     _en_cola(res["trabajo"], _q_importado, "asistente", res["trabajo"] + ".zip", f.name, slug=slug)
     
-    # P.5.4: crear proyecto automaticamente si la spec no tiene errores
-    # --si o sin stdin interactivo: crear automaticamente sin preguntar
-    if getattr(a, "si", None) is True:
-        crear = True
-        print(f"Creando proyecto automaticamente: python xd.py crear-proyecto {slug}")
-    elif getattr(a, "si", None) is False:
-        # Explicitamente rechazado en tests
-        crear = False
-        print(f"Siguiente:  python xd.py crear-proyecto {slug}")
-    else:
-        # Modo interactivo: preguntar
-        print("\nSpec importada sin errores. Crear proyecto en Label Studio? [S/n] ", end="", flush=True)
-        try:
-            respuesta = input().strip().lower()
-            crear = respuesta in ("", "s", "si")
-        except EOFError:
-            # stdin redirigido, no crear
-            crear = False
-            print()
-    
-    if crear:
-        import subprocess
-        rc = subprocess.call(["python", str(RAIZ / "xd.py"), "crear-proyecto", slug])
-        if rc == 0:
-            print(f"OK: proyecto '{slug}' creado en Label Studio")
-        else:
-            print(f"AVISO: crear-proyecto salio con rc={rc}")
-    elif getattr(a, "si", None) is not False:
-        print("Creacion omitida. Para crear el proyecto manualmente:")
-        print(f"  python xd.py crear-proyecto {slug}")
+    if getattr(a, "si", False):                      # P.5.R2: --si crea el proyecto de verdad (con --aplicar)
+        print(f"--si: creando el proyecto en Label Studio (crear-proyecto {slug} --aplicar)")
+        rc = cmd_crear_proyecto(NS_(slug=slug, aplicar=True))
+        print(f"OK: proyecto '{slug}' creado" if rc == 0 else f"AVISO: crear-proyecto salio con rc {rc}")
+        return rc
+    print(f"Siguiente:  python xd.py crear-proyecto {slug}   (o asistente-importar {slug} --aplicar --si)")
     return 0
 
 # ----------------------------------------------------------------- P.1 cola de trabajos
@@ -1547,7 +1523,7 @@ def main():
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.add_argument("--forzar", action="store_true", help="reemplazar una spec existente (con respaldo)")
     p.add_argument("--comparar", default="", help="slug de una spec de referencia (solo lectura)")
-    p.add_argument("--si", action="store_true", help="P.5.4: confirma automaticamente la creacion del proyecto")
+    p.add_argument("--si", action="store_true", help="P.5: con --aplicar, crea tambien el proyecto (crear-proyecto --aplicar)")
     p.set_defaults(f=cmd_asistente_importar)
     p = sub.add_parser("trabajos", help="cola de trabajos del hub (SQLite); --reconciliar compara con Drive")
     p.add_argument("--tipo", default="", choices=["", "asistente", "preetiquetado", "entrenamiento", "precodificacion"])
