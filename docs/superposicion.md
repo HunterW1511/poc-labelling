@@ -204,9 +204,30 @@ el pip (carga de SAM 3 en Kaggle 172-328 s -> ~31 s), clic calentado al cargar y
 
 **Opciones** (medir las dos primeras antes de elegir):
 1. **Predicciones primero, cache despues:** traer e importar los `_pred.json` (KB) en cuanto el kernel termina y bajar
-   la cache aparte. Medir como se comporta el clic mientras la cache no llega (codifica en CPU).
+   la cache aparte. Ojo: con el hub liviano el clic NO codifica en CPU; una foto sin cache devuelve `sin_cache`
+   (`motor/interactivo.py`). La apuesta es que la cache del trozo 2 llega mientras se revisa el trozo 1.
 2. **Cache mas ligera** (fp16 o compresion): menos MB por foto. Toca `cache_sam3.py` y la clave de la cache (no el
    nucleo); verificar que el clic dé las mismas mascaras y medir el costo de descomprimir en el hub.
 3. **Importar predicciones en bloque** en vez de una por tarea (parte de los 54 s).
 
 **Meta:** lote completo de 100 fotos revisable (predicciones + cache) en < 8 min sin empeorar el trozo 1 (< 5 min).
+
+**Medido en el hub (06/11/2026), opcion 2:** la cache ya es fp16; comprimirla sin perdida solo la deja en 86-89 %
+(zlib 6: 0.17 s por foto; lzma 1: 1.5 s). Ahorraria ~30 s de 4 min 51 s: descartada. Con perdida (int8) cambia la
+clave y hay que validar las mascaras: decision aparte.
+
+**Implementado (06/11/2026): opciones 1 + 3.**
+- `worker --traer --fase pred|cache|todo` (`--file-pattern` de la CLI 2.2.5: `re.search` sobre el nombre, baja los
+  archivos de uno en uno). La fase pred deja el envio en `parcial` si llevaba precodificacion; la fase cache lo cierra.
+  El boton de la UI usa `todo`.
+- Daemon: estado -> traer (pred) -> `lote-importar` -> enviar el siguiente trozo -> traer (cache) -> `cache-importar`.
+- `importar_lote.py`: un GET `/api/predictions?project=` y un POST `/api/projects/<id>/import/predictions` por lote
+  (antes, 2 peticiones por tarea). Ese endpoint no quita duplicados: se filtran antes. GET del proyecto 17 (100
+  predicciones): 0.08 MB en 0.23 s.
+
+**Medido (06/11/2026, docs/prueba_p5.md, cuarta medida):** kernel terminado -> predicciones del trozo 2 en
+Label Studio en 1 min 4 s (antes ~5 min 46 s); importacion en bloque de 83 en 19 s (antes 54 s); la cache bajo a
+0.61 MB/s (red lenta ese dia). **Sigue pendiente** de la lista original: T0 hasta las predicciones del trozo 2 importadas (meta
+< 8 min), T0 hasta su cache en el hub, lo que tarda la importacion en bloque (antes 54 s) y que ve quien revisa en una
+tarea sin cache. Si la bajada de la cache resulta limitada por ir de un archivo en uno: probar a mano 4 `kernels output`
+en paralelo con patrones por el primer caracter de la clave antes de meterlo en el codigo.

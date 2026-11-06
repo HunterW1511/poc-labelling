@@ -237,11 +237,19 @@ def estado_kernel(kernel, correr=subprocess.run):
     return m.group(1).lower(), (f.group(1).strip() if f else "")
 
 
-def bajar_salida(kernel, destino, correr=subprocess.run):
+# P.4.R6: la salida se baja en dos fases. La CLI (2.2.5) aplica --file-pattern con re.search sobre el nombre de cada
+# archivo y los baja de uno en uno: primero todo menos la cache (KB: _pred.json, indices, logs), luego los .pt (MB).
+PATRON_SIN_CACHE = r"^(?!.*\.pt$)"
+PATRON_CACHE = r"\.pt$"
+
+
+def bajar_salida(kernel, destino, correr=subprocess.run, patron=None):
+    """Baja la salida del kernel a destino (lo vacia antes). patron: solo los archivos cuyo nombre lo cumple."""
     destino = Path(destino)
     shutil.rmtree(destino, ignore_errors=True)
     destino.mkdir(parents=True)
-    return cli("kernels", "output", kernel, "-p", destino, "-o", "-q", correr=correr, timeout=3600)
+    filtro = ["--file-pattern", patron] if patron else []
+    return cli("kernels", "output", kernel, "-p", destino, "-o", "-q", *filtro, correr=correr, timeout=3600)
 
 
 def archivos_salida(salida):

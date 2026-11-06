@@ -413,7 +413,7 @@ def cmd_dataset(a):
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
               "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador", "cache_sam3")
-TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia", "cache_clic", "precalentar")      # necesitan el contenedor (torch, rutas /app)
+TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia", "cache_clic", "precalentar", "importar_lote")      # necesitan el contenedor (torch, rutas /app)
 
 
 def _correr(cmd, timeout=600):
@@ -962,68 +962,128 @@ def cmd_worker(a):
                       "worker --enviar --aplicar (o el daemon) lo lanza")
             print("Siguiente:  python xd.py worker --estado  y, cuando termine,  python xd.py worker --traer --aplicar")
             return 0
-        # --traer: cada envio pendiente terminado, por su version del kernel
+        # --traer (P.4.R6): fase pred = todo menos la cache (.pt) de cada envio terminado, por su version del kernel;
+        # fase cache = los .pt de los envios en parcial; todo = las dos seguidas (el boton de la UI)
+        fase = getattr(a, "fase", None) or "todo"
+        if fase == "cache":
+            return _traer_cache(a, C, con, K, T, kv, [e for e in pend if e["estado"] == "parcial"])
         if not pend:
             raise SystemExit("No hay envios a Kaggle pendientes de traer")
-        listos, archivos_tot = [], 0
-        for e in pend:
-            est, msg = K.estado_kernel(kv(e))
-            if est not in ("complete", "error"):       # no es un error: aun no hay nada que traer de ese envio
-                try:
-                    hace = f" hace {(time.time() - time.mktime(time.strptime(e['creado'], '%Y-%m-%dT%H:%M:%S'))) / 60:.0f} min"
-                except (TypeError, ValueError):
-                    hace = ""
-                print(f"El envio {e['nombre']} sigue en Kaggle ({est or 'sin estado'}; lanzado{hace}): nada que traer "
-                      "todavia; vuelve a pulsar 'Traer de Kaggle' en unos minutos.")
-                continue
-            sal = _kaggle_dir() / "salida" / e["nombre"]
-            rc, out = K.bajar_salida(kv(e), sal)
-            if rc:
-                print(f"AVISO: no se pudo bajar la salida de {e['nombre']} (rc {rc}): {out[-300:]}")
-                continue
-            for f in sorted(sal.glob("*.log")):
-                print(f"--- {e['nombre']}: {f.name} (final)\n" + K.ocultar(f.read_text(encoding="utf-8", errors="replace"))[-1500:])
-            if est == "error":
-                print(f"El kernel de {e['nombre']} termino en ERROR: {msg}")
-            archivos = K.archivos_salida(sal)
-            archivos_tot += len(archivos)
-            print(f"envio {e['nombre']} (kernel v{e.get('version') or '?'}): {len(archivos)} archivo(s) de salida")
-            for rel, _ in archivos:
-                print(f"  {'copiando' if a.aplicar else 'COPIARIA'} {rel} -> espejo")
-            listos.append((e, est, msg, sal))
-        if not listos:
-            return 0
-        if not a.aplicar:
-            print("SOLO REPORTE: --aplicar los copia al espejo, reconcilia la cola y marca en error lo que no volvio")
-            return 0
-        for e, est, msg, sal in listos:
-            K.integrar(sal, T.raiz)
-            try:                                      # P.4.R4: el kernel verifico entera esta version de xd-pesos
-                v = json.loads((sal / "envio_resultado.json").read_text(encoding="utf-8")).get("pesos_verificados")
-                if v:
-                    _guardar_pesos_verificados({"version": v, "fecha": time.strftime("%Y-%m-%dT%H:%M:%S")})
-            except (OSError, ValueError):
-                pass
-            if e["estado"] in ("lanzado", "corriendo"):
-                C.marcar_envio(con, e["nombre"], ENVIO_DE_KERNEL[est], msg or None)
-        c = _carpetas_transporte()
-        r = C.reconciliar(C.listar(con), _archivos_transporte(c))
-        hechas, av = C.aplicar(con, r["acciones"], leer_error=_leer_error(c))
-        for v in av:
-            print(f"AVISO: {v}")
-        perdidos = 0
-        for e, est, msg, sal in listos:
-            perdidos += len(C.sin_salida(con, e["nombre"], f"el envio {e['nombre']} termino ({est}) sin resultado para este trabajo"))
-            C.marcar_envio(con, e["nombre"], "traido")
-        print(f"OK {len(listos)} envio(s), {archivos_tot} archivo(s) en el espejo | {hechas} cambio(s) en la cola"
-              + (f" | {perdidos} sin resultado -> error (Reintentar)" if perdidos else ""))
-        print("Siguiente: lote-importar --fijar-version y cache-importar --aplicar (o asistente-importar / registrar)")
-        if C.por_enviar(con):
-            print("Hay trabajos esperando su envio (trozo siguiente):  python xd.py worker --enviar --aplicar")
-        return 0
+        rc = _traer_pred(a, C, con, K, T, kv, [e for e in pend if e["estado"] != "parcial"])
+        if fase == "todo" and rc == 0:
+            parciales = [e for e in (C.envios_pendientes(con, "kaggle") if con else pend) if e["estado"] == "parcial"]
+            if parciales:
+                return _traer_cache(a, C, con, K, T, kv, parciales)
+        return rc
     finally:
         if con:
             con.close()
+
+
+def _traer_pred(a, C, con, K, T, kv, pend):
+    """P.4.R6 fase 1: baja de cada envio terminado todo menos la cache (KB), lo integra al espejo y reconcilia la cola.
+    Un envio con precodificacion queda en parcial (su cache se baja en la fase 2); el resto, traido."""
+    listos, archivos_tot = [], 0
+    for e in pend:
+        est, msg = K.estado_kernel(kv(e))
+        if est not in ("complete", "error"):       # no es un error: aun no hay nada que traer de ese envio
+            try:
+                hace = f" hace {(time.time() - time.mktime(time.strptime(e['creado'], '%Y-%m-%dT%H:%M:%S'))) / 60:.0f} min"
+            except (TypeError, ValueError):
+                hace = ""
+            print(f"El envio {e['nombre']} sigue en Kaggle ({est or 'sin estado'}; lanzado{hace}): nada que traer "
+                  "todavia; vuelve a pulsar 'Traer de Kaggle' en unos minutos.")
+            continue
+        sal = _kaggle_dir() / "salida" / e["nombre"]
+        rc, out = K.bajar_salida(kv(e), sal, patron=K.PATRON_SIN_CACHE)
+        if rc:
+            print(f"AVISO: no se pudo bajar la salida de {e['nombre']} (rc {rc}): {out[-300:]}")
+            continue
+        for f in sorted(sal.glob("*.log")):
+            print(f"--- {e['nombre']}: {f.name} (final)\n" + K.ocultar(f.read_text(encoding="utf-8", errors="replace"))[-1500:])
+        if est == "error":
+            print(f"El kernel de {e['nombre']} termino en ERROR: {msg}")
+        archivos = K.archivos_salida(sal)
+        archivos_tot += len(archivos)
+        print(f"envio {e['nombre']} (kernel v{e.get('version') or '?'}): {len(archivos)} archivo(s) de salida")
+        for rel, _ in archivos:
+            print(f"  {'copiando' if a.aplicar else 'COPIARIA'} {rel} -> espejo")
+        if _con_cache(C, con, e):
+            print("  la cache de SAM 3 (.pt) se baja despues, en la fase cache")
+        listos.append((e, est, msg, sal))
+    if not listos:
+        return 0
+    if not a.aplicar:
+        print("SOLO REPORTE: --aplicar los copia al espejo, reconcilia la cola y marca en error lo que no volvio")
+        return 0
+    for e, est, msg, sal in listos:
+        K.integrar(sal, T.raiz)
+        try:                                      # P.4.R4: el kernel verifico entera esta version de xd-pesos
+            v = json.loads((sal / "envio_resultado.json").read_text(encoding="utf-8")).get("pesos_verificados")
+            if v:
+                _guardar_pesos_verificados({"version": v, "fecha": time.strftime("%Y-%m-%dT%H:%M:%S")})
+        except (OSError, ValueError):
+            pass
+        if e["estado"] in ("lanzado", "corriendo"):
+            C.marcar_envio(con, e["nombre"], ENVIO_DE_KERNEL[est], msg or None)
+    c = _carpetas_transporte()
+    r = C.reconciliar(C.listar(con), _archivos_transporte(c))
+    hechas, av = C.aplicar(con, r["acciones"], leer_error=_leer_error(c))
+    for v in av:
+        print(f"AVISO: {v}")
+    perdidos = 0
+    parciales = 0
+    for e, est, msg, sal in listos:
+        perdidos += len(C.sin_salida(con, e["nombre"], f"el envio {e['nombre']} termino ({est}) sin resultado para este trabajo"))
+        cache = _con_cache(C, con, e)
+        parciales += cache
+        C.marcar_envio(con, e["nombre"], "parcial" if cache else "traido")
+    print(f"OK {len(listos)} envio(s), {archivos_tot} archivo(s) en el espejo | {hechas} cambio(s) en la cola"
+          + (f" | {perdidos} sin resultado -> error (Reintentar)" if perdidos else "")
+          + (f" | {parciales} con la cache pendiente (fase cache)" if parciales else ""))
+    print("Siguiente: lote-importar --fijar-version (o asistente-importar / registrar)"
+          + (" y worker --traer --fase cache --aplicar + cache-importar --aplicar" if parciales else ""))
+    if C.por_enviar(con):
+        print("Hay trabajos esperando su envio (trozo siguiente):  python xd.py worker --enviar --aplicar")
+    return 0
+
+
+def _con_cache(C, con, e):
+    """El envio llevaba precodificacion (su salida trae .pt que se bajan en la fase cache)."""
+    return bool(con) and any(t["tipo"] == "precodificacion" for t in C.trabajos_de(con, e["nombre"]))
+
+
+def _traer_cache(a, C, con, K, T, kv, parciales):
+    """P.4.R6 fase 2: baja solo los .pt de los envios en parcial (MB), los integra al espejo y los marca traido.
+    Si la bajada falla el envio sigue en parcial (el siguiente ciclo lo reintenta)."""
+    if not parciales:
+        print("Sin cache de SAM 3 pendiente de bajar")
+        return 0
+    if not a.aplicar:
+        for e in parciales:
+            print(f"envio {e['nombre']} (kernel v{e.get('version') or '?'}): BAJARIA su cache de SAM 3 (.pt) al espejo")
+        print("SOLO REPORTE: --aplicar baja la cache (luego cache-importar --aplicar)")
+        return 0
+    hechos = 0
+    for e in parciales:
+        sal = _kaggle_dir() / "salida" / f"{e['nombre']}_cache"
+        t0 = time.time()
+        rc, out = K.bajar_salida(kv(e), sal, patron=K.PATRON_CACHE)
+        if rc:
+            print(f"AVISO: no se pudo bajar la cache de {e['nombre']} (rc {rc}); sigue pendiente: {K.ocultar(out)[-300:]}")
+            continue
+        archivos = [f for _, f in K.archivos_salida(sal) if f.suffix == ".pt"]
+        mb = sum(f.stat().st_size for f in archivos) / 1e6
+        seg = time.time() - t0
+        K.integrar(sal, T.raiz)
+        shutil.rmtree(sal, ignore_errors=True)        # ya esta en el espejo: no duplicar cientos de MB
+        C.marcar_envio(con, e["nombre"], "traido")
+        hechos += 1
+        print(f"envio {e['nombre']}: cache {len(archivos)} archivo(s), {mb:.1f} MB en {seg:.0f} s"
+              + (f" ({mb / seg:.2f} MB/s)" if seg >= 1 else ""))
+    if hechos:
+        print("Siguiente: cache-importar --aplicar")
+    return 0 if hechos == len(parciales) else 1
 
 
 def cmd_ver(a):
@@ -1389,10 +1449,11 @@ def _paso(nombre, f, *args):
 def ciclo_daemon(aplicar):
     """Un ciclo: lo mismo que se haria a mano, en orden. Sin --aplicar solo reporta (nada escribe)."""
     T = _transporte()
-    w = lambda **kw: NS_(**{"enviar": False, "estado": False, "traer": False, "limite": 0, "aplicar": aplicar, **kw})
+    w = lambda **kw: NS_(**{"enviar": False, "estado": False, "traer": False, "limite": 0, "aplicar": aplicar,
+                            "fase": "todo", **kw})
     if T.nombre == "kaggle":
         _paso("estado de los envios", cmd_worker, w(estado=True))
-        _paso("traer lo terminado", cmd_worker, w(traer=True))
+        _paso("traer lo terminado (sin la cache)", cmd_worker, w(traer=True, fase="pred"))
     else:                                            # Drive/Colab: el worker deja los resultados; se reconcilia
         _paso("reconciliar con Drive", cmd_trabajos, NS_(reconciliar=True, reintentar=0, aplicar=aplicar, horas=24,
                                                          tipo="", estado="", todos=False))
@@ -1402,9 +1463,10 @@ def ciclo_daemon(aplicar):
         d = T.carpeta("lotes")
         nuevos = [f.name for f in d.glob("*_pred.json") if not (LOTES_LOCAL / f.name).exists()] if d and d.is_dir() else []
         print(f"-- importar predicciones\n   {len(nuevos)} _pred.json por importar" + (" (con --aplicar)" if nuevos else ""))
-    _paso("importar cache de SAM 3", cmd_cache_importar, NS_(aplicar=aplicar))
-    if T.nombre == "kaggle":
+    if T.nombre == "kaggle":                         # P.4.R6: el siguiente trozo sale antes de la bajada larga
         _paso("enviar el siguiente trozo", cmd_worker, w(enviar=True))
+        _paso("traer la cache de SAM 3", cmd_worker, w(traer=True, fase="cache"))
+    _paso("importar cache de SAM 3", cmd_cache_importar, NS_(aplicar=aplicar))
 
 
 SONDEO_RAPIDO = 20                               # P.4.R4: segundos entre ciclos mientras un envio corre en Kaggle
@@ -1425,8 +1487,9 @@ def _envio_en_curso():
 
 
 def cmd_daemon(a):
-    """P.5.R1: encadena los pasos externos cada N minutos: estado -> traer -> importar (lotes y cache) -> enviar el
-    siguiente trozo. Sin --aplicar solo reporta. Ctrl+C lo detiene."""
+    """P.5.R1: encadena los pasos externos cada N minutos: estado -> traer (sin la cache) -> importar predicciones ->
+    enviar el siguiente trozo -> traer la cache -> importar la cache (P.4.R6). Sin --aplicar solo reporta.
+    Ctrl+C lo detiene."""
     if not a.aplicar:
         print("daemon en MODO REPORTE: no escribe nada (agrega --aplicar para que traiga, importe y envie)")
     n = 0
@@ -1590,6 +1653,8 @@ def main():
     p.add_argument("--enviar", action="store_true", help="sube los zips pendientes del espejo y lanza el kernel")
     p.add_argument("--estado", action="store_true", help="estado del kernel; con --aplicar lo anota en la cola")
     p.add_argument("--traer", action="store_true", help="baja la salida del kernel al espejo local")
+    p.add_argument("--fase", choices=["pred", "cache", "todo"], default="todo",
+                   help="P.4.R6 con --traer: pred = todo menos la cache (.pt); cache = solo los .pt; todo = las dos")
     p.add_argument("--limite", type=int, default=0, help="minutos maximos del kernel (0 = el de Kaggle)")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_worker)

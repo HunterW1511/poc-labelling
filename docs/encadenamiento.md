@@ -148,9 +148,10 @@ El daemon de P.5.2 llamaba a `motor/importar_pred.py` (no existe), solo buscaba 
 python xd.py daemon [--intervalo 5] [--una-vez] [--aplicar]
 ```
 
-- Cada ciclo hace, en orden y con los mismos comandos que a mano: `worker --estado` -> `worker --traer` ->
-  `lote-importar --fijar-version` -> `cache-importar` -> `worker --enviar` (el siguiente trozo, solo si el kernel esta
-  libre). Con Drive/Colab: `trabajos --reconciliar` en lugar de estado/traer, y sin enviar.
+- Cada ciclo hace, en orden y con los mismos comandos que a mano: `worker --estado` -> `worker --traer --fase pred`
+  -> `lote-importar --fijar-version` -> `worker --enviar` (el siguiente trozo, solo si el kernel esta libre) ->
+  `worker --traer --fase cache` -> `cache-importar` (P.4.R6: las predicciones y el siguiente trozo no esperan a la
+  bajada de la cache, que son cientos de MB). Con Drive/Colab: `trabajos --reconciliar` en lugar de estado/traer, y sin enviar.
 - **Sin `--aplicar` solo reporta** (regla de oro 3): no trae, no importa, no envia. Con `--aplicar` es el modo
   "automatico" del diseno.
 - Un paso que falla imprime el motivo y el ciclo sigue; el daemon no se cae. Ctrl+C lo detiene.

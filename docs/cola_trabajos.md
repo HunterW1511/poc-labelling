@@ -132,5 +132,8 @@ Migracion automatica 1 -> 2 al abrir la base (conserva todos los trabajos; `PRAG
 - `worker --traer --aplicar`: baja la salida al espejo, reconcilia (`listo` o `error` por trabajo) y lo que no
   volvio pasa a `error` (`sin_salida`), para poder Reintentar. Un reintento (`error -> pendiente`) saca al trabajo
   de su envio y el siguiente `--enviar` lo vuelve a tomar.
+- P.4.R6: `--traer` va en dos fases. `--fase pred` baja todo menos los `.pt` (KB) y deja el envio en `parcial` si
+  llevaba precodificacion (si no, `traido`); `--fase cache` baja solo los `.pt` de los envios en `parcial` y los pasa
+  a `traido` (si la bajada falla, siguen en `parcial`). `--fase todo` (defecto, boton de la UI) hace las dos.
 - UI (Pasos externos, solo con Kaggle): **Enviar a Kaggle**, **Estado de Kaggle**, **Traer de Kaggle**, cada uno con
   reporte y confirmacion; el texto de cada trabajo dice en que punto esta su envio.

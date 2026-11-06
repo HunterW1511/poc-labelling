@@ -57,8 +57,8 @@ la cache de SAM 3 precodificada en el worker para un clic rapido en el hub (P.3)
 | 8. Validacion | `aceptacion N`, `modelos N` | Host y contenedor |
 | 9. En vivo | `ver N [--backend auto|pt|openvino]` | Host |
 
-"Worker" = Kaggle: `worker --enviar --aplicar`, `worker --estado`, `worker --traer --aplicar` (en la UI: Enviar /
-Estado / Traer de Kaggle); o Colab: `worker.ipynb` celdas 1 y 2 y luego Reconciliar.
+"Worker" = Kaggle: `worker --enviar --aplicar`, `worker --estado`, `worker --traer [--fase pred|cache|todo] --aplicar`
+(en la UI: Enviar / Estado / Traer de Kaggle, que usa `--fase todo`); o Colab: `worker.ipynb` celdas 1 y 2 y luego Reconciliar.
 Todo lo que escribe tiene modo reporte; `--aplicar` escribe. La UI exige el reporte OK antes de aplicar.
 Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
 
@@ -72,8 +72,8 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
 - `python xd.py worker --enviar | --estado | --traer [--aplicar] [--limite MIN]`: envia a Kaggle los trabajos en espera
   (un envio = una version del dataset privado `xd-envios` + el kernel privado `xd-worker`), consulta el kernel y trae
   la salida al espejo local (reconcilia la cola; lo que no vuelve queda en error para Reintentar).
-- `python xd.py daemon [--intervalo 5] [--una-vez] [--aplicar]`: cada N minutos estado -> traer -> importar (lotes y
-  cache) -> siguiente trozo. Sin `--aplicar` solo reporta. Diseno: [docs/encadenamiento.md](docs/encadenamiento.md).
+- `python xd.py daemon [--intervalo 5] [--una-vez] [--aplicar]`: cada N minutos estado -> traer sin la cache ->
+  importar predicciones -> siguiente trozo -> traer la cache -> importar la cache (P.4.R6). Sin `--aplicar` solo reporta. Diseno: [docs/encadenamiento.md](docs/encadenamiento.md).
 - `python xd.py kaggle-pesos [--pesos RUTA] [--aplicar]`: sube `sam3.pt` + SAM License como dataset **privado**
   `<KAGGLE_USUARIO>/xd-pesos` (una cuenta por persona; token en `~/.kaggle/access_token`). El `--aplicar` lo corre la persona.
 - `python xd.py precodificar N [--todas] [--limite K] [--trozo 16] [--aplicar]`: fotos del proyecto sin cache de SAM 3 -> trabajo

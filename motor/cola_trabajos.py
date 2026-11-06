@@ -40,7 +40,8 @@ CREATE TABLE envios (
   creado TEXT NOT NULL, actualizado TEXT NOT NULL, detalle TEXT);
 CREATE INDEX trabajos_envio ON trabajos (envio);
 """
-ESTADOS_ENVIO = ("lanzado", "corriendo", "terminado", "fallido", "traido")
+# P.4.R6: parcial = predicciones e indices traidos, falta bajar la cache (.pt); sigue pendiente hasta traido
+ESTADOS_ENVIO = ("lanzado", "corriendo", "terminado", "fallido", "parcial", "traido")
 # P.4.3: campo grupo (varios trabajos de un mismo lote original, por ejemplo lote_p13_..._t01 y _t02)
 _DDL_3 = """
 ALTER TABLE trabajos ADD COLUMN grupo TEXT;

@@ -1,18 +1,45 @@
 """L.4 / D.6: sube a Label Studio las predicciones generadas en Colab (modo sam3 o hijo).
 Uso (en el contenedor): python /app/importar_lote.py <archivo_pred.json> [--sufijo colab] [--fijar-version]
 --fijar-version: deja el model_version del proyecto en la version del lote (Label Studio muestra esas).
-El archivo se busca tal cual o dentro de /app/lotes."""
+El archivo se busca tal cual o dentro de /app/lotes.
+P.4.R6: un GET y un POST por lote (antes, dos peticiones por tarea)."""
 import argparse, json
 from pathlib import Path
 
 import requests
 
-from cola import HEADERS, LS_URL, _ya_tiene
-from config import LOTES
+from config import HEADERS, LOTES, LS_URL
 from perfil import leer_perfil
 from version import huella_perfil, version_modelo
 
 PROTEGIDOS = {1, 2}
+
+
+def existentes(pid):
+    """P.4.R6: pares (tarea, model_version) que ya tiene el proyecto, en UNA peticion (antes: una por tarea)."""
+    r = requests.get(f"{LS_URL}/api/predictions", params={"project": pid}, headers=HEADERS, timeout=120)
+    r.raise_for_status()
+    return {(p.get("task"), p.get("model_version")) for p in r.json()}
+
+
+def subir_en_bloque(pid, predicciones, sufijo=""):
+    """P.4.R6: sube las predicciones que faltan en UNA peticion (/import/predictions no quita duplicados: por eso se
+    filtran antes con existentes). -> (subidas, omitidas)"""
+    ya = existentes(pid)
+    nuevas, omitidas = [], 0
+    for p in predicciones:
+        ver = p["model_version"] + (f"-{sufijo}" if sufijo else "")
+        if (p["task"], ver) in ya:
+            omitidas += 1
+            print(f"  tarea {p['task']}: ya tiene {ver}, omito")
+            continue
+        ya.add((p["task"], ver))                     # un lote con la misma tarea dos veces sube una sola
+        nuevas.append({"task": p["task"], "model_version": ver, "score": p["score"], "result": p["result"]})
+        print(f"  tarea {p['task']}: {len(p['result'])} regiones -> {ver}")
+    if nuevas:
+        requests.post(f"{LS_URL}/api/projects/{pid}/import/predictions", headers=HEADERS, timeout=300,
+                      json=nuevas).raise_for_status()
+    return len(nuevas), omitidas
 
 
 def main():
@@ -40,18 +67,7 @@ def main():
               f"{huella_perfil(perfil)}).")
 
     ver_final = lote["version"] + (f"-{a.sufijo}" if a.sufijo else "")
-    subidas = omitidas = 0
-    for p in lote["predicciones"]:
-        ver = p["model_version"] + (f"-{a.sufijo}" if a.sufijo else "")
-        if _ya_tiene(p["task"], ver):
-            omitidas += 1
-            print(f"  tarea {p['task']}: ya tiene {ver}, omito")
-            continue
-        requests.post(f"{LS_URL}/api/predictions", headers=HEADERS, timeout=60, json={
-            "task": p["task"], "model_version": ver, "score": p["score"], "result": p["result"]}
-        ).raise_for_status()
-        subidas += 1
-        print(f"  tarea {p['task']}: {len(p['result'])} regiones -> {ver}")
+    subidas, omitidas = subir_en_bloque(pid, lote["predicciones"], a.sufijo)
     print(f"OK {lote['lote']} (modo {modo}): {subidas} subidas, {omitidas} omitidas")
 
     actual = pj.get("model_version")

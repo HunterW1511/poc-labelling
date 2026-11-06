@@ -105,3 +105,29 @@ calentamiento de R4 funciona. En esta prueba la carga tardo 108 s porque el chec
 Con el checkpoint ligero, SAM 3 queda listo en 3 s (+0.4 s de calentamiento). Arreglado tambien `xd.py precalentar`
 (y `reiniciar-motor --precalentar`): desde L.10 mandaba un `/predict` vacio que ya no carga nada; ahora manda
 `params: {"precalentar": true}` (test `motor/test_precalentar.py`).
+
+## Cuarta medida, con P.4.R6 (06/11/2026): predicciones primero, cache despues
+
+Proyecto 18 (recreado, slug `prueba-p4`), 99 fotos (Fondo 29 + Mesa 70; trozos 16 + 83), **sin cache en el hub**
+(apartada en `datos/cache_sam3_apartada_r6`, con el checkpoint ligero en su sitio). Kernels v15 y v16.
+**Ojo:** el daemon no corrio entre 12:35 y 13:04 (se cerro tras el arranque), asi que el tiempo desde T0 no sirve;
+se mide desde que cada kernel termina. **La red estaba mucho mas lenta que en la tercera medida** (subida del trozo 2:
+243 s contra 31 s; bajada 0.61 MB/s contra ~1.25-1.4 MB/s).
+
+| Paso (trozo 2) | R5 (tercera medida) | R6 (esta) |
+| --- | --- | --- |
+| Kernel (83-84 fotos, 2 GPU) | 153 s | 155 s |
+| Daemon ve `complete` -> predicciones traidas (fase pred, sin `.pt`) | 4 min 51 s (con la cache) | **44 s** |
+| Importar las predicciones | 54 s (una peticion por tarea) | **19 s** (en bloque; 82 subidas, 1 omitida que ya existia) |
+| **Kernel terminado -> predicciones del trozo 2 en Label Studio** | **~5 min 46 s** | **1 min 4 s** |
+| Bajar la cache (fase cache) | (incluida arriba) | 360 MB en 586 s (0.61 MB/s) |
+| Kernel terminado -> cache del trozo 2 en el hub | ~5 min 46 s | 10 min 38 s (red lenta) |
+
+Trozo 1: la cache (16 fotos, 69 MB) bajo en 115 s (0.60 MB/s) **despues** de enviar el trozo 2, que ya no la espera.
+
+**Lectura:** con la red de la tercera medida, las predicciones de todo el lote quedarian en Label Studio hacia los
+**~8.5 min desde T0** (antes 13 min 47 s), y la cache del trozo 2 ~5 min despues (~13 min), mientras se revisa el
+trozo 1 (16 fotos en ~5 min = < 19 s por foto). La meta de "lote completo con cache < 8 min" sigue sin cumplirse: el
+cuello es la bajada de la cache (misma tasa con 16 y con 83 archivos). Sin medir: que ve quien revisa una tarea sin
+cache (el motor liviano devuelve `sin_cache`), y si bajar en paralelo (4 `kernels output` con patrones por clave)
+sube la tasa.

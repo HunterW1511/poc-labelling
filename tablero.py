@@ -302,6 +302,7 @@ KAGGLE = {
     "corriendo": "En Kaggle ({envio}): corriendo; 'Traer de Kaggle' cuando termine",
     "terminado": "En Kaggle ({envio}): terminado; pulsa 'Traer de Kaggle'",
     "fallido": "En Kaggle ({envio}): el kernel fallo; pulsa 'Traer de Kaggle' para ver el log",
+    "parcial": "En Kaggle ({envio}): predicciones traidas; falta la cache (pulsa 'Traer de Kaggle' o deja el daemon)",
     "traido": "En Kaggle ({envio}): traido sin resultado; Reintentar",
 }
 

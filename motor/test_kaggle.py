@@ -1,5 +1,5 @@
 """P.2.6: kaggle_xd.py y xd.py kaggle-pesos con la CLI de Kaggle SIMULADA (sin red ni cuenta). Uso: python test_kaggle.py"""
-import io, json, os, shutil, sys, tempfile
+import io, json, os, re, shutil, sys, tempfile
 from contextlib import closing, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -19,6 +19,37 @@ def _falla(exc, f, *a, **kw):
     except exc as e:
         return e
     raise AssertionError(f"se esperaba {exc.__name__}")
+
+
+def _salida(dest, archivos, patron=None):
+    """Escribe la salida simulada de un kernel. Como la CLI (--file-pattern, re.search sobre el nombre), solo los
+    archivos que cumplen patron; el log del kernel llega siempre."""
+    for rel, contenido in archivos.items():
+        if patron and not rel.endswith(".log") and not re.search(patron, rel):
+            continue
+        f = Path(dest) / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        (f.write_bytes if isinstance(contenido, bytes) else f.write_text)(contenido)
+
+
+def test_patrones_de_las_dos_fases():
+    """P.4.R6: la fase pred baja todo menos los .pt; la fase cache, solo los .pt; bajar_salida pasa --file-pattern."""
+    nombres = ["lotes/lote_p3_x_pred.json", "lotes/pre_p3_y_cache.json", "lotes/cache/abc_644_def_8.4.174.pt",
+               "envio_resultado.json", "runs/dataset_p4_x/weights/best.pt", "lote.pt.json"]
+    pred = [n for n in nombres if re.search(K.PATRON_SIN_CACHE, n)]
+    cache = [n for n in nombres if re.search(K.PATRON_CACHE, n)]
+    assert cache == ["lotes/cache/abc_644_def_8.4.174.pt", "runs/dataset_p4_x/weights/best.pt"], cache
+    assert sorted(pred + cache) == sorted(nombres)                        # cada archivo en una sola fase
+    assert re.search(K.PATRON_CACHE, "abc.pt") and not re.search(K.PATRON_SIN_CACHE, "abc.pt")   # nombre sin carpeta
+    with tempfile.TemporaryDirectory() as t:
+        cli = CLI([(0, "")])
+        (Path(t) / "sal" / "viejo.txt").parent.mkdir(parents=True)
+        (Path(t) / "sal" / "viejo.txt").write_text("x")
+        K.bajar_salida("emi/xd-worker/3", Path(t) / "sal", correr=cli, patron=K.PATRON_CACHE)
+        assert cli.vistos[0][-2:] == ["--file-pattern", K.PATRON_CACHE], cli.vistos
+        assert not (Path(t) / "sal" / "viejo.txt").exists()               # destino vacio antes de bajar
+        K.bajar_salida("emi/xd-worker/3", Path(t) / "sal", correr=cli)
+        assert "--file-pattern" not in cli.vistos[1], cli.vistos
 
 
 class CLI:
@@ -290,7 +321,7 @@ def test_envios_escalonados_por_trozo():
             C.crear(con, "asistente", nombres["asistente"][0], slug="s", estado="enviado")
         ks = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida")
         viejo = (xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, os.environ.get("KAGGLE_CONFIG_DIR"), {n: getattr(K, n) for n in ks})
-        estado, subidos, bajados, version = {}, [], [], [0]
+        estado, subidos, bajados, caches, version = {}, [], [], [], [0]
         try:
             xd.RAIZ, xd.ENV, xd.TRABAJOS_DB = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}, db
             os.environ["KAGGLE_CONFIG_DIR"] = str(t / "cfg")
@@ -302,11 +333,12 @@ def test_envios_escalonados_por_trozo():
                 version[0] += 1
                 return 0, f"Kernel version {version[0]} successfully pushed.  Please check progress at https://x"
             K.push_kernel = push
-            def bajar(k, dest, **kw):
-                bajados.append(k)
-                (Path(dest) / "lotes").mkdir(parents=True, exist_ok=True)
-                for n in (["lote_p3_x_t01", "pre_p3_y_t01"] if k.endswith("/1") else ["lote_p3_x_t02", "pre_p3_y_t02"]):
-                    (Path(dest) / "lotes" / (f"{n}_pred.json" if n.startswith("lote") else f"{n}_cache.json")).write_text("{}")
+            def bajar(k, dest, patron=None, **kw):
+                (caches if patron == K.PATRON_CACHE else bajados).append(k)
+                ns = ["lote_p3_x_t01", "pre_p3_y_t01"] if k.endswith("/1") else ["lote_p3_x_t02", "pre_p3_y_t02"]
+                arch = {f"lotes/{n}_pred.json" if n.startswith("lote") else f"lotes/{n}_cache.json": "{}" for n in ns}
+                arch[f"lotes/cache/{ns[1]}.pt"] = b"pt"
+                _salida(dest, arch, patron)
                 return 0, ""
             K.bajar_salida = bajar
             def correr(**kw):
@@ -326,6 +358,8 @@ def test_envios_escalonados_por_trozo():
             estado["emi/xd-worker/2"] = "running"
             rc, out = correr(traer=True, aplicar=True)                                  # el 1 se trae aunque el 2 corra
             assert bajados == ["emi/xd-worker/1"] and "sigue en Kaggle (running" in out, out
+            assert caches == ["emi/xd-worker/1"] and "cache 1 archivo(s)" in out, out        # P.4.R6: fase todo
+            assert (esp / "lotes" / "cache" / "pre_p3_y_t01.pt").exists()
             with closing(C.abrir(db)) as con:
                 est = {x["archivo"]: x["estado"] for x in C.listar(con)}
                 assert est["lote_p3_x_t01.zip"] == "listo" and est["pre_p3_y_t01.zip"] == "listo"
@@ -348,6 +382,74 @@ def test_envios_escalonados_por_trozo():
                 os.environ["KAGGLE_CONFIG_DIR"] = cfg
 
 
+def test_traer_en_dos_fases():
+    """P.4.R6: --fase pred deja en parcial el envio con precodificacion (sus predicciones ya en el espejo, sin .pt);
+    --fase cache baja solo los .pt y lo cierra; si la bajada falla sigue en parcial. Sin --aplicar no baja la cache."""
+    import cola_trabajos as C
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        esp = t / "datos" / "kaggle" / "espejo"
+        (t / "cfg").mkdir()
+        (t / "cfg" / "access_token").write_text(TOKEN)
+        db = t / "datos" / "trabajos.sqlite"
+        with closing(C.abrir(db)) as con:
+            for n in ("lote_p3_x_t01.zip", "pre_p3_x_t01.zip"):
+                C.crear(con, "precodificacion" if n.startswith("pre_") else "preetiquetado", n, proyecto=3, estado="enviado")
+            C.crear_envio(con, "envio_1", "kaggle", "emi", [1, 2], version=1)
+        ks = ("estado_kernel", "bajar_salida")
+        viejo = (xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, os.environ.get("KAGGLE_CONFIG_DIR"), {n: getattr(K, n) for n in ks})
+        bajadas, falla = [], [0]
+        try:
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}, db
+            os.environ["KAGGLE_CONFIG_DIR"] = str(t / "cfg")
+            K.estado_kernel = lambda k, **kw: ("complete", "")
+            def bajar(k, dest, patron=None, **kw):
+                bajadas.append(patron)
+                if patron == K.PATRON_CACHE and falla[0]:
+                    falla[0] -= 1
+                    return 1, "se corto"
+                _salida(dest, {"lotes/lote_p3_x_t01_pred.json": "{}", "lotes/pre_p3_x_t01_cache.json": "{}",
+                               "lotes/cache/k1.pt": b"pt", "lotes/cache/k2.pt": b"pt"}, patron)
+                return 0, ""
+            K.bajar_salida = bajar
+            def correr(**kw):
+                a = NS(**{"enviar": False, "estado": False, "traer": True, "limite": 0, "aplicar": False, "fase": "todo", **kw})
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    rc = xd.cmd_worker(a)
+                return rc, out.getvalue()
+            def envio():
+                with closing(C.abrir(db)) as con:
+                    return C.envio(con, "envio_1")["estado"]
+            rc, out = correr()                                                  # reporte: solo la fase pred baja
+            assert rc == 0 and bajadas == [K.PATRON_SIN_CACHE] and "se baja despues, en la fase cache" in out, out
+            assert "COPIARIA lotes/lote_p3_x_t01_pred.json" in out and "k1.pt" not in out and envio() == "lanzado", out
+            rc, out = correr(fase="pred", aplicar=True)
+            assert rc == 0 and envio() == "parcial" and "1 con la cache pendiente" in out, out
+            assert (esp / "lotes" / "lote_p3_x_t01_pred.json").exists() and not (esp / "lotes" / "cache").exists()
+            rc, out = correr(fase="pred", aplicar=True)                         # un parcial no se vuelve a bajar
+            assert rc == 0 and bajadas.count(K.PATRON_SIN_CACHE) == 2, (bajadas, out)
+            rc, out = correr(fase="cache")
+            assert rc == 0 and "BAJARIA su cache" in out and K.PATRON_CACHE not in bajadas, out
+            falla[0] = 1
+            rc, out = correr(fase="cache", aplicar=True)
+            assert rc == 1 and "sigue pendiente" in out and envio() == "parcial", out
+            rc, out = correr(fase="cache", aplicar=True)
+            assert rc == 0 and envio() == "traido" and "cache 2 archivo(s)" in out, out
+            assert sorted(f.name for f in (esp / "lotes" / "cache").iterdir()) == ["k1.pt", "k2.pt"]
+            assert not (t / "datos" / "kaggle" / "salida" / "envio_1_cache").exists()   # sin copia duplicada
+            rc, out = correr(fase="cache", aplicar=True)
+            assert rc == 0 and "Sin cache de SAM 3 pendiente" in out, out
+        finally:
+            xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, cfg, f = viejo
+            for n, v in f.items():
+                setattr(K, n, v)
+            if cfg is None:
+                os.environ.pop("KAGGLE_CONFIG_DIR", None)
+            else:
+                os.environ["KAGGLE_CONFIG_DIR"] = cfg
+
+
 def test_daemon_ciclo_completo():
     """P.5.R1: el daemon encadena estado -> traer -> importar (lotes y cache) -> siguiente trozo; sin --aplicar no escribe."""
     import cola_trabajos as C
@@ -358,20 +460,22 @@ def test_daemon_ciclo_completo():
         shutil.copy2(RAIZ / "motor" / "lanzador.py", t / "motor")
         esp = t / "datos" / "kaggle" / "espejo" / "lotes"
         esp.mkdir(parents=True)
-        for n in ("lote_p3_x_t01.zip", "lote_p3_x_t02.zip"):
+        zips = ("lote_p3_x_t01.zip", "lote_p3_x_t02.zip", "pre_p3_x_t01.zip", "pre_p3_x_t02.zip")
+        for n in zips:
             (esp / n).write_bytes(b"zip")
         (t / "cfg").mkdir()
         (t / "cfg" / "access_token").write_text(TOKEN)
         db = t / "datos" / "trabajos.sqlite"
         with closing(C.abrir(db)) as con:
-            for n in ("lote_p3_x_t01.zip", "lote_p3_x_t02.zip"):
-                C.crear(con, "preetiquetado", n, proyecto=3, estado="enviado", grupo="lote_p3_x")
-        clave = CS.clave("a" * 64, 644, "b" * 64, "8.4.174")
+            for n in zips:
+                C.crear(con, "precodificacion" if n.startswith("pre_") else "preetiquetado", n, proyecto=3,
+                        estado="enviado", grupo=n[:-8])
+        claves = {s_: CS.clave(c * 64, 644, "b" * 64, "8.4.174") for s_, c in (("t01", "a"), ("t02", "c"))}
         ks = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida",
               "version_dataset")
         viejo = (xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, xd.LOTES_LOCAL, xd.en_motor, os.environ.get("KAGGLE_CONFIG_DIR"),
                  {n: getattr(K, n) for n in ks})
-        estado, version, importados, bajados, pesos = {}, [0], [], [], []
+        estado, version, importados, bajados, caches, pesos = {}, [0], [], [], [], []
         try:
             xd.RAIZ, xd.ENV, xd.TRABAJOS_DB = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}, db
             xd.LOTES_LOCAL = t / "motor" / "lotes"
@@ -385,15 +489,16 @@ def test_daemon_ciclo_completo():
                 version[0] += 1
                 return 0, f"Kernel version {version[0]} successfully pushed."
             K.push_kernel = push
-            def bajar(k, dest, **kw):
-                bajados.append(k)
-                (Path(dest) / "lotes" / "cache").mkdir(parents=True, exist_ok=True)
-                n = "lote_p3_x_t01" if k.endswith("/1") else "lote_p3_x_t02"
-                (Path(dest) / "lotes" / f"{n}_pred.json").write_text(json.dumps({"proyecto": 3, "predicciones": []}))
-                (Path(dest) / "lotes" / "cache" / f"{clave}.pt").write_bytes(b"pt")
-                ver = pesos[len(bajados) - 1] or {}                                   # el kernel verifico si se lo pidieron
-                (Path(dest) / "envio_resultado.json").write_text(json.dumps(
-                    {"pesos_verificados": ver.get("version") if ver.get("verificar_sha") else None}))
+            def bajar(k, dest, patron=None, **kw):
+                (caches if patron == K.PATRON_CACHE else bajados).append(k)
+                s_ = "t01" if k.endswith("/1") else "t02"
+                ver = pesos[(len(bajados) if patron != K.PATRON_CACHE else len(caches)) - 1] or {}   # verifico si se lo pidieron
+                _salida(dest, {f"lotes/lote_p3_x_{s_}_pred.json": json.dumps({"proyecto": 3, "predicciones": []}),
+                               f"lotes/pre_p3_x_{s_}_cache.json": json.dumps({"fotos": [{"clave": claves[s_]}]}),
+                               f"lotes/cache/{claves[s_]}.pt": b"pt",
+                               "envio_resultado.json": json.dumps(
+                                   {"pesos_verificados": ver.get("version") if ver.get("verificar_sha") else None})},
+                        patron)
                 return 0, ""
             K.bajar_salida = bajar
             def en_motor(script, *args):
@@ -414,7 +519,12 @@ def test_daemon_ciclo_completo():
             estado["emi/xd-worker/1"] = "complete"
             out = ciclo(True)                                                    # ciclo 2: trae, importa, trozo 2
             assert bajados == ["emi/xd-worker/1"] and importados == ["lote_p3_x_t01_pred.json"], out
-            assert (t / "motor" / "cache_sam3" / f"{clave}.pt").exists() and version[0] == 2 and "trozo 2" in out, out
+            assert caches == ["emi/xd-worker/1"], caches                         # P.4.R6: la cache, en su fase
+            assert (t / "motor" / "cache_sam3" / f"{claves['t01']}.pt").exists() and version[0] == 2 and "trozo 2" in out, out
+            orden = [out.index(x) for x in ("-- traer lo terminado (sin la cache)", "-- importar predicciones",
+                                            "-- enviar el siguiente trozo", "-- traer la cache de SAM 3",
+                                            "-- importar cache de SAM 3")]
+            assert orden == sorted(orden), out                                   # el trozo 2 sale antes de la bajada larga
             assert pesos[1] == {"version": 1, "verificar_sha": False}, pesos        # v1 ya verificada: solo tamano
             estado["emi/xd-worker/2"] = "running"
             out = ciclo(True)                                                    # ciclo 3: el 2 corre; nada que hacer
@@ -422,6 +532,7 @@ def test_daemon_ciclo_completo():
             estado["emi/xd-worker/2"] = "complete"
             out = ciclo(True)                                                    # ciclo 4: trae e importa el 2
             assert importados == ["lote_p3_x_t01_pred.json", "lote_p3_x_t02_pred.json"] and "Nada que enviar" in out, out
+            assert caches == ["emi/xd-worker/1", "emi/xd-worker/2"] and (t / "motor" / "cache_sam3" / f"{claves['t02']}.pt").exists()
             with closing(C.abrir(db)) as con:
                 assert {x["estado"] for x in C.listar(con)} == {"importado"} and C.envios_pendientes(con, "kaggle") == []
             assert not xd._envio_en_curso()

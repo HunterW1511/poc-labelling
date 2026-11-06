@@ -220,6 +220,8 @@ def test_migracion_1_a_2_conserva_trabajos():
             assert [x["id"] for x in C.sin_salida(con, "envio_1", "no volvio")] == [tr["id"]]
             assert C.ultimo_envio(con, "kaggle")["nombre"] == "envio_1" and C.ultimo_envio(con, "colab") is None
             assert [e["nombre"] for e in C.envios_pendientes(con, "kaggle")] == ["envio_1"]       # P.4.R1
+            C.marcar_envio(con, "envio_1", "parcial")                    # P.4.R6: falta la cache -> sigue pendiente
+            assert [e["estado"] for e in C.envios_pendientes(con, "kaggle")] == ["parcial"]
             C.marcar_envio(con, "envio_1", "traido")
             assert C.envios_pendientes(con, "kaggle") == [] and C.envio(con, "envio_1")["version"] is None
 
