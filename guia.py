@@ -17,7 +17,15 @@ FASES = ("Crear proyecto", "Describir el caso", "Fotos", "Pre-etiquetar", "Verif
 QUIEN = ("ui", "host", "label_studio", "editar", "espera", "nada")
 TEXTO_ESPERA = {"colab": "Esperando a Colab: abre worker.ipynb y corre la celda 2",
                 "kaggle": "En Kaggle: 'Enviar a Kaggle' y, cuando termine, 'Traer de Kaggle' (Pasos externos)"}
-MUESTRA = 30                                    # tamano de muestra sugerido para el primer pre-etiquetado (20-50)
+# P.7 bloque 2.2: minimo de fotos revisadas para entrenar (con 19 el hijo de la prueba P.7 no aprendio nada); si el
+# proyecto tiene menos tareas, basta con revisarlas todas. La muestra inicial coincide con el minimo.
+MIN_REVISADAS = 50
+MUESTRA = MIN_REVISADAS                         # tamano de muestra sugerido para el primer pre-etiquetado
+
+
+def faltan_para_entrenar(anot, tareas):
+    """Fotos revisadas que faltan para poder entrenar (0 = ya se puede)."""
+    return max(0, max(1, min(MIN_REVISADAS, tareas)) - anot)
 
 
 def accion(nombre, slug=None, n=None, **opciones):
@@ -99,15 +107,17 @@ def siguiente(t, ejecutor="colab"):
                      + ejecutor, donde=ejecutor)
     if lo.get("sin_importar"):
         return _paso(pre, "ui", "Predicciones listas: subelas a Label Studio", accion("lote-importar", fijar_version=True))
-    entrenar = accion("dataset", n=n, drive=True)
+    faltan = faltan_para_entrenar(anot, tareas)
+    entrenar = accion("dataset", n=n, drive=True) if not faltan else None
+    minimo = f" Para entrenar faltan {faltan} (minimo {min(MIN_REVISADAS, tareas)} revisadas)." if faltan else ""
     if not hijo:
         if anot == 0 and not ls.get("total_predictions_number"):
             return _paso(4, "ui", "Pre-etiqueta una muestra de fotos con SAM 3", accion("preetiquetar", n=n, muestra=MUESTRA))
-        return _paso(5, "label_studio", f"Corrige y da Submit en Label Studio ({anot} de {tareas} revisadas). "
-                     "Cuando termines la muestra, entrena el modelo hijo", entrenar if anot else None)
+        return _paso(5, "label_studio", f"Corrige y da Submit en Label Studio ({anot} de {tareas} revisadas)."
+                     + (minimo or " Cuando termines la muestra, entrena el modelo hijo"), entrenar)
     if str(ls.get("model_version") or "").startswith("hijo-"):
-        return _paso(8, "label_studio", f"Corrige lo que el hijo dejo mal ({anot} de {tareas} revisadas). "
-                     "Cuando termines, entrena el modelo final", entrenar)
+        return _paso(8, "label_studio", f"Corrige lo que el hijo dejo mal ({anot} de {tareas} revisadas)."
+                     + (minimo or " Cuando termines, entrena el modelo final"), entrenar)
     if tareas > anot:
         return _paso(7, "ui", f"Pre-etiqueta las {tareas - anot} fotos que faltan con el modelo hijo",
                      accion("preetiquetar", n=n, muestra=tareas - anot, modo="hijo"))

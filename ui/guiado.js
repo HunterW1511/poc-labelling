@@ -130,7 +130,7 @@ function gVer(t, actual, final) {
     gbarra(anot, ls.task_number || 0) + '<div class="fila" style="margin-top:8px"><a href="' + lsurl + '" target="_blank" rel="noopener">' +
     gbtn("Abrir Label Studio", 'data-fijo="1"', true) + "</a>" +
     (g.accion ? gbtn(final ? "Ya revise: entrenar el modelo final" : "Ya revise la muestra: entrenar el modelo hijo", 'data-g="accion"') : "") + "</div>" +
-    (g.accion ? "" : '<p class="chico">Revisa al menos una foto para poder entrenar.</p>');
+    (g.accion ? "" : '<p class="chico">' + esc(g.texto) + "</p>");
 }
 PASO[5] = (t, a) => gVer(t, a, false);
 PASO[8] = (t, a) => gVer(t, a, true);

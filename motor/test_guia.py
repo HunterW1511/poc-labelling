@@ -36,19 +36,21 @@ CASOS = [   # (tarjeta, paso, quien, accion, cmd)
     (_t(fotos=[{"tienes": 0}, {"tienes": 3}]), 3, "host", "capturar", "python capturar.py s"),
     (_t(fotos=[{"tienes": 9}]), 3, "ui", "sincronizar", "python xd.py sincronizar s"),
     # 4-6. Pre-etiquetar, verificar y modelo hijo
-    (_t(), 4, "ui", "preetiquetar", "python xd.py preetiquetar 7 --muestra 30"),
+    (_t(), 4, "ui", "preetiquetar", "python xd.py preetiquetar 7 --muestra 50"),
     (_t(lotes={"en_colab": ["lote_p7_x.zip"]}), 4, "espera", None, ""),
     (_t(en_espera={"preetiquetado": 1}), 4, "espera", None, ""),
     (_t(lotes={"sin_importar": ["lote_p7_x_pred.json"]}), 4, "ui", "lote-importar", "python xd.py lote-importar --fijar-version"),
     (_t(ls=_ls(pred=5)), 5, "label_studio", None, ""),
-    (_t(ls=_ls(anot=2, pred=5)), 5, "label_studio", "dataset", "python xd.py dataset 7 --drive"),
+    (_t(ls=_ls(anot=2, pred=5)), 5, "label_studio", None, ""),                 # 2.2: faltan para el minimo
+    (_t(ls=_ls(anot=5, pred=5)), 5, "label_studio", "dataset", "python xd.py dataset 7 --drive"),
     (_t(ls=_ls(anot=2, pred=5), en_espera={"entrenamiento": 1}), 6, "espera", None, ""),
     (_t(ls=_ls(anot=2, pred=5), runs_sin_registrar=["r1"]), 6, "ui", "registrar",
      "python xd.py registrar 7 --run ultimo --activar"),
     # 7-10. Con el hijo activo
     (_t(ls=_ls(anot=2, pred=5), modelos=HIJO), 7, "ui", "preetiquetar", "python xd.py preetiquetar 7 --muestra 3 --modo hijo"),
     (_t(ls=_ls(anot=2, pred=5), modelos=HIJO, en_espera={"preetiquetado": 1}), 7, "espera", None, ""),
-    (_t(ls=_ls(anot=2, pred=8, ver="hijo-1-abc"), modelos=HIJO), 8, "label_studio", "dataset", "python xd.py dataset 7 --drive"),
+    (_t(ls=_ls(anot=2, pred=8, ver="hijo-1-abc"), modelos=HIJO), 8, "label_studio", None, ""),
+    (_t(ls=_ls(anot=5, pred=8, ver="hijo-1-abc"), modelos=HIJO), 8, "label_studio", "dataset", "python xd.py dataset 7 --drive"),
     (_t(ls=_ls(anot=5, pred=8), modelos=HIJO), 9, "ui", "dataset", "python xd.py dataset 7 --drive"),
     (_t(ls=_ls(anot=5, pred=8, ver="hijo-1-abc"), modelos=HIJO, en_espera={"entrenamiento": 1}), 9, "espera", None, ""),
     (_t(ls=_ls(anot=5, pred=8, ver="hijo-1-abc"), modelos=HIJO, runs_sin_registrar=["r2"]), 9, "ui", "registrar",
@@ -81,6 +83,16 @@ def test_acciones_en_la_lista_blanca():
             assert (v is True) == (tipo == "flag"), (a, k, tipo)
             if isinstance(tipo, list):
                 assert v in tipo, (a, k, v)
+
+
+def test_minimo_para_entrenar():
+    """2.2: 50 revisadas (o todas si el proyecto tiene menos); el texto dice cuantas faltan."""
+    assert guia.faltan_para_entrenar(49, 150) == 1 and guia.faltan_para_entrenar(50, 150) == 0
+    assert guia.faltan_para_entrenar(3, 5) == 2 and guia.faltan_para_entrenar(5, 5) == 0
+    assert guia.faltan_para_entrenar(0, 0) == 1                       # sin tareas no se entrena
+    t = _t(ls={"task_number": 150, "num_tasks_with_annotations": 26, "total_predictions_number": 30})
+    g = guia.siguiente(t, "kaggle")                                   # el caso de la prueba P.7
+    assert g["paso"] == 5 and g["accion"] is None and "faltan 24" in g["texto"], g
 
 
 def test_flujo_de_diez_pasos():
