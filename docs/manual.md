@@ -26,6 +26,17 @@ Lo dice `TRANSPORTE` en tu `.env` (instalacion en README.md):
 
 En los pasos de abajo, "el worker" es cualquiera de los dos.
 
+### Modo guiado y automatico (P.7)
+- **Guiado** (boton arriba a la derecha; la UI lo recuerda): la tarjeta **Tus casos** muestra cada proyecto con sus
+  9 pasos (Caso, Proyecto, Fotos, Pre-etiquetado, Revision, Modelo, Mas tareas, Validacion, En vivo), el paso actual
+  y **un solo boton** para hacerlo. Lo que escribe primero muestra el reporte en **Salida** y pide confirmar. Para un
+  caso nuevo escribe un nombre corto y pulsa **Describirlo** (asistente) o **Usar plantilla**. Es lo mismo que
+  `python xd.py guia`.
+- **Avanzado**: todas las acciones, los pasos externos y el asistente completo (como antes).
+- **Automatico** (tarjeta Servicios): **Probar un ciclo** (reporte, no escribe) y luego **Activar** cada N minutos:
+  envia, trae e importa lo de Kaggle sin que pulses nada, aunque cierres la UI (`python xd.py daemon --aplicar`).
+  **Detener** lo para al terminar el paso en curso. Mientras esta activo, la UI no deja hacer a mano esos pasos.
+
 ## 2. Un proyecto de principio a fin
 
 ### 2.1 Describir el caso (spec)

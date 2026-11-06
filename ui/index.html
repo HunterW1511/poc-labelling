@@ -51,10 +51,22 @@ td.n,th.n{text-align:right}
 ul{margin:4px 0;padding-left:20px;font-size:13px}
 audio{width:100%;margin-top:6px}
 a{color:var(--ac)}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.modo button{padding:5px 12px}
+.modo button.sel{background:var(--ac);border-color:var(--ac);color:#fff}
+body.guiado .avz{display:none}
+body:not(.guiado) #guiado{display:none}
+body.guiado:not(.conasist) #asistente{display:none}
+.pasos{display:flex;gap:3px;list-style:none;padding:0;margin:8px 0;flex-wrap:wrap}
+.pasos li{font-size:11px;padding:2px 7px;border-radius:9px;border:1px solid var(--bd);color:var(--sub)}
+.pasos li.hecho{border-color:var(--ok);color:var(--ok)}
+.pasos li.actual{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600}
+.gnota{font-size:12px;color:var(--sub);margin:6px 0 0}
 </style>
 </head>
 <body>
-<header><h1>PoC-Labelling</h1></header>
+<header><h1>PoC-Labelling</h1>
+<div class="modo"><button id="mguiado" title="Un paso a la vez, sin comandos">Guiado</button><button id="mavanzado" title="Todas las acciones y los pasos externos">Avanzado</button></div></header>
 <main>
 <section class="card">
 <h2>Servicios</h2>
@@ -72,7 +84,13 @@ a{color:var(--ac)}
 <button class="mini pri" id="dactivar" disabled title="Se habilita cuando 'Probar un ciclo' termina OK">Activar</button>
 <button class="mini" id="ddetener" style="display:none">Detener</button></div>
 </section>
-<section class="card" id="externos">
+<section class="card" id="guiado">
+<div class="fila" style="justify-content:space-between"><h2>Tus casos</h2><button class="mini" id="gact">Actualizar</button></div>
+<div class="fila"><label class="chico">Nuevo caso: nombre corto <input id="gslug" type="text" placeholder="tornillos"></label>
+<button class="mini" id="gasist">Describirlo (asistente)</button><button class="mini" id="gplant">Usar plantilla</button></div>
+<div id="gcasos" class="grid" style="margin-top:12px"><p class="chico">Cargando...</p></div>
+</section>
+<section class="card avz" id="externos">
 <div class="fila" style="justify-content:space-between"><h2>Pasos externos (<span id="ejecutor">colab</span>)</h2><div><span id="xkag" style="display:none"><button id="xenv">Enviar a Kaggle</button> <button id="xest">Estado de Kaggle</button> <button id="xtra">Traer de Kaggle</button> </span><button id="xrec" style="display:none">Reconciliar</button> <button id="xact">Actualizar</button></div></div>
 <div id="xavisos" class="avisos"></div>
 <div id="xlista"><p class="chico">Cargando...</p></div>
@@ -98,7 +116,7 @@ a{color:var(--ac)}
 <div id="ares"><p class="chico">Escribe un slug y pulsa "Ver ultimo resultado".</p></div>
 </div>
 </section>
-<section class="card">
+<section class="card avz">
 <div class="fila" style="justify-content:space-between"><h2>Proyectos</h2>
 <span class="fila"><label class="chico"><input type="checkbox" id="todos"> Mostrar protegidos y borrados</label><button id="actualizar">Actualizar</button></span></div>
 <div id="avisos" class="avisos"></div>
@@ -115,7 +133,7 @@ a{color:var(--ac)}
 <script>
 const $ = s => document.querySelector(s);
 let timer = null, VISTO = 0, LS_URL = "http://127.0.0.1:8080";
-let ACC = {}, ULTIMO = [], TARJ = {}, ABIERTA = null, PENDIENTE = null, DAEMON = {}, TRAB = {};
+let ACC = {}, ULTIMO = [], TARJ = {}, ABIERTA = null, PENDIENTE = null, DAEMON = {}, TRAB = {}, FASES = [], GUIA = {};
 let REC = null, BLOB = null, EXT = "", T0 = 0, TREC = null, APOLL = null, ADET = null;
 const DEFECTOS = {"preetiquetar": {"--muestra": "30", "--modo": "auto"}, "registrar": {"--run": "ultimo", "--activar": true},
   "dataset": {"--formato": "det", "--drive": true}, "lote-importar": {"--fijar-version": true}};
@@ -176,6 +194,7 @@ function pintarDaemon() {
   ["#dprobar", "#dintl", "#dactivar"].forEach(s => $(s).style.display = act ? "none" : "");
   $("#ddetener").style.display = act ? "" : "none";
   $("#dactivar").disabled = act || TRAB.corriendo || !(TRAB.cmd === "xd.py daemon --una-vez" && TRAB.rc === 0);
+  if (Object.keys(GUIA).length) pintarGuiado();
   if ($("#xkag")) $("#xkag").style.visibility = act ? "hidden" : "visible";
 }
 function mostrarConfirmar(t) {
@@ -429,7 +448,7 @@ async function cargarProyectos() {
   try {
     const r = await api("/api/proyectos");
     $("#avisos").innerHTML = (r.avisos || []).map(esc).join("<br>");
-    ULTIMO = r.tarjetas; pintarProyectos();
+    ULTIMO = r.tarjetas; pintarProyectos(); pintarGuiado();
   } catch (e) { $("#proyectos").innerHTML = '<p class="avisos">Error: ' + esc(e.message) + "</p>"; }
   $("#actualizar").disabled = false;
 }
@@ -477,6 +496,68 @@ $("#aplantilla").onclick = () => {
   correrAccion({accion: "spec-nueva", slug: slug, n: null, opciones: {"--titulo": titulo}}, false);
 };
 $("#confsi").onclick = () => { if (PENDIENTE) correrAccion(PENDIENTE, true); };
+// ---------------------------------------------------------------- P.7.2 modo guiado: un paso a la vez (guia.py decide)
+function gtarjeta(t) {
+  const g = t.siguiente || {}, p = g.paso || 0, key = (t.slug || "") + "|" + (t.n || ""), a = g.accion;
+  GUIA[key] = t;
+  let h = '<div class="pro"><h3>' + esc(t.titulo) + '</h3><p class="meta">' + (t.n ? "proyecto " + t.n : "sin proyecto todavia") +
+    (t.slug ? " | " + esc(t.slug) : "") + "</p>";
+  if (p) h += '<ol class="pasos">' + FASES.map((f, i) => '<li class="' + (i + 1 < p ? "hecho" : i + 1 === p ? "actual" : "") + '">' +
+    (i + 1) + " " + esc(f) + "</li>").join("") + "</ol>";
+  h += '<div class="sig">' + (p ? "<b>Paso " + p + " de " + FASES.length + ": " + esc(g.fase) + ".</b> " : "") + esc(g.texto || "") + "</div>";
+  let bot = "", nota = "";
+  if (a && ACC[a.accion] && ["ui", "host", "editar"].includes(g.quien))
+    bot += '<button class="pri" data-gk="' + esc(key) + '">' + esc(g.quien === "editar" ? "Validar la spec" : (ACC[a.accion].titulo || a.accion)) + "</button>";
+  if (g.quien === "host") nota = "Se abre una ventana en el escritorio (camara): usa sus teclas para capturar o salir.";
+  if (g.quien === "editar") nota = "Edita motor/proyectos/" + (t.slug || "") + "/spec.json y luego valida.";
+  if (a && a.accion === "spec-nueva") bot += '<button data-gasist="' + esc(t.slug) + '">Describirlo (asistente)</button>';
+  if (g.quien === "label_studio" && t.n) bot += '<a href="' + esc(LS_URL) + "/projects/" + t.n + '/" target="_blank" rel="noopener"><button class="pri">Abrir en Label Studio</button></a>';
+  if (g.quien === "espera") nota = DAEMON.activo ? "En curso: el automatico lo trae e importa solo." :
+    "Activa el automatico (arriba, en Servicios) para que se envie y se traiga solo.";
+  if (a && ACC[a.accion] && ACC[a.accion].aplicar) nota = (nota ? nota + " " : "") + "Primero ves un reporte; nada se escribe hasta que confirmas.";
+  return h + (bot ? '<div class="acc">' + bot + "</div>" : "") + (nota ? '<p class="gnota">' + esc(nota) + "</p>" : "") + "</div>";
+}
+function pintarGuiado() {
+  GUIA = {};
+  const ts = ULTIMO.filter(t => !(t.protegido || t.borrado) && !/-ref$/.test(t.slug || ""));
+  $("#gcasos").innerHTML = ts.map(gtarjeta).join("") || '<p class="chico">Todavia no hay casos: escribe un nombre corto arriba y describelo.</p>';
+}
+function slugGuiado() {
+  const s = $("#gslug").value.trim();
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(s)) { alert("Nombre corto: minusculas, digitos, _ o - (por ejemplo tornillos)"); return null; }
+  return s;
+}
+function abrirAsistente(slug) {
+  $("#aslug").value = slug; document.body.classList.add("conasist"); cargarAsistente();
+  $("#asistente").scrollIntoView({behavior: "smooth"});
+}
+$("#gcasos").onclick = e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.gasist) return abrirAsistente(b.dataset.gasist);
+  const t = GUIA[b.dataset.gk];
+  if (!t) return;
+  const a = t.siguiente.accion, ab = {accion: a.accion, slug: a.slug || null, n: a.n || null,
+    opciones: Object.assign({}, DEFECTOS[a.accion] || {}, a.opciones || {})};
+  if (a.accion === "spec-nueva") {
+    const titulo = prompt("Titulo del caso (puedes cambiarlo luego)", t.slug);
+    if (titulo === null) return;
+    ab.opciones["--titulo"] = titulo;
+  }
+  correrAccion(ab, false);
+  $("#salida").scrollIntoView({behavior: "smooth", block: "center"});
+};
+$("#gact").onclick = cargarProyectos;
+$("#gasist").onclick = () => { const s = slugGuiado(); if (s) abrirAsistente(s); };
+$("#gplant").onclick = () => { const s = slugGuiado(); if (s) { $("#aslug").value = s; $("#aplantilla").onclick(); } };
+function modo(m) {
+  document.body.classList.toggle("guiado", m === "guiado");
+  $("#mguiado").classList.toggle("sel", m === "guiado"); $("#mavanzado").classList.toggle("sel", m !== "guiado");
+  try { localStorage.setItem("xd_modo", m); } catch (e) {}
+}
+$("#mguiado").onclick = () => modo("guiado");
+$("#mavanzado").onclick = () => modo("avanzado");
+try { modo(localStorage.getItem("xd_modo") || "guiado"); } catch (e) { modo("guiado"); }
 $("#dprobar").onclick = () => correrAccion({accion: "daemon", slug: null, n: null, opciones: {"--una-vez": true}}, false);
 $("#dactivar").onclick = async () => {
   const iv = parseInt($("#dint").value, 10);
@@ -495,7 +576,7 @@ $("#cancelar").onclick = async () => { await api("/api/cancelar", {}); sondear()
 $("#actualizar").onclick = cargarProyectos;
 $("#todos").onchange = pintarProyectos;
 (async () => {
-  try { ACC = (await api("/api/acciones")).acciones; } catch (e) { alert("No pude leer las acciones: " + e.message); }
+  try { const r = await api("/api/acciones"); ACC = r.acciones; FASES = r.fases || []; } catch (e) { alert("No pude leer las acciones: " + e.message); }
   cargarServicios(); cargarProyectos(); cargarExternos(); sondear();
 })();
 </script>

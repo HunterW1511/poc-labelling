@@ -322,7 +322,8 @@ class Manejador(BaseHTTPRequestHandler):
             if self.path == "/api/externos":
                 return self._json(200, tablero.externos())
             if self.path == "/api/acciones":
-                return self._json(200, {"acciones": ACCIONES, "protegidos": sorted(tablero.PROTEGIDOS)})
+                return self._json(200, {"acciones": ACCIONES, "protegidos": sorted(tablero.PROTEGIDOS),
+                                        "fases": list(tablero.guia.FASES)})
             if self.path.startswith("/api/asistente?"):
                 slug = (parse_qs(urlparse(self.path).query).get("slug") or [""])[0]
                 if not SLUG.match(slug):
