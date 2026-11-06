@@ -71,3 +71,28 @@ leen en frio y a la vez desde `/kaggle/input`. Arreglo **P.4.R5**: `lanzador.pre
 en un hilo mientras corre el pip, y `ejecutar` la espera antes de cargar SAM 3. Si la carga vuelve a ~30 s, el trozo 1
 quedaria en ~2.5-3 min y el lote completo en ~6-7 min. Ademas, el intervalo del daemon cuenta ahora desde el inicio del
 ciclo (cada ciclo tarda 5-7 s con Kaggle; antes el "sondeo de 20 s" era de ~25-27 s).
+
+## Tercera medida, con P.4.R5 y la cache apartada (06/11/2026)
+
+Proyecto 17 (recreado), mismas 100 fotos, **sin cache en el hub** (`motor/cache_sam3` apartada en
+`datos/cache_sam3_apartada`): el kernel pre-etiqueta **y** precodifica, como con fotos nuevas. Kernels v13 y v14.
+
+| Hora | Paso | R4 (v11/v12, sin precodificar) | R5 (v13/v14, con precodificacion) |
+| --- | --- | --- | --- |
+| 11:09:22 | T0 (`preetiquetar 17 --muestra 100 --trozo 16 --enviar --aplicar`) | | |
+| 11:10:06 | Muestra + exporta lote y precodificacion del trozo 1 | 14 s | 44 s (precodificacion 22 s) |
+| 11:10:54 | Trozo 1 en Kaggle (subida 26 s + dataset 8 s) | 42 s desde T0 | 1 min 31 s desde T0 |
+| 11:10:53 - 11:12:50 | Kernel v13: `sam3.pt` en memoria en 11 s (a la par del pip, sin espera); **carga de SAM 3 30.6 s**; pre-etiquetado 16 en 2 GPU 45 s; precodificacion 16 en 2 GPU 23 s; total 91 s | 207 s | 91 s |
+| 11:12:50 | El daemon ve `complete` (ciclos cada ~20 s) | < 30 s | < 25 s |
+| 11:12:50 - 11:13:39 | **Traer la salida: 69 MB de cache** | 15 s (sin cache) | **49 s** |
+| **11:13:46** | **Trozo 1 revisable (16 predicciones + 16 caches)** | **4 min 44 s** | **4 min 24 s** |
+| 11:14:28 | Trozo 2 en Kaggle (subida 31 s) | | |
+| 11:14:27 - 11:17:21 | Kernel v14: `sam3.pt` 15 s; carga SAM 3 31.6 s; pre-etiquetado 84 en 2 GPU 81 s; precodificacion 84 en 2 GPU 46 s; total 153 s | 382 s | 153 s |
+| 11:17:23 - 11:22:14 | **Traer la salida: 364 MB de cache (84 x 4.3 MB, ~1.25 MB/s)** | | **4 min 51 s** |
+| 11:22:14 - 11:23:08 | Importar 84 predicciones (una peticion por tarea) | | 54 s |
+| **11:23:09** | **Lote completo importado** | **13 min 21 s** | **13 min 47 s** |
+
+**Meta (< 5 min) cumplida para el trozo 1 en el caso real** (con precodificacion). P.4.R5 funciono: la carga de SAM 3
+volvio a ~31 s y los kernels bajaron a menos de la mitad. **Nuevo cuello de botella: bajar la cache de Kaggle**
+(~4.3 MB por foto): en el trozo 2 tardo mas que el kernel. Sin esa bajada, el lote completo habria quedado hacia los
+~8 min. El primer clic con el calentamiento de R4 sigue sin medirse.

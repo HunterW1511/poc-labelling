@@ -175,3 +175,9 @@ Trozo 1 revisable a los **4 min 44 s** de T0 (meta cumplida, pero sin precodific
 lote completo importado a los 13 min 21 s. La carga de SAM 3 en Kaggle subio a 172-328 s al quitar el sha (lectura en
 frio y concurrente de `sam3.pt`): P.4.R5 la precalienta con una lectura secuencial durante el pip. P.4 sigue abierta
 hasta medir R5 con la cache apartada (con precodificacion, como en un caso real).
+
+## Tercera medida (P.4.R5, 06/11/2026, con precodificacion): ver docs/prueba_p5.md
+
+Trozo 1 revisable a los **4 min 24 s** con predicciones y cache (meta cumplida en el caso real); lote completo
+13 min 47 s. La carga de SAM 3 volvio a ~31 s (kernel del trozo 1: 91 s). Ahora pesa la bajada de la cache desde Kaggle
+(364 MB del trozo 2 en 4 min 51 s). Falta medir el primer clic antes de cerrar P.4.

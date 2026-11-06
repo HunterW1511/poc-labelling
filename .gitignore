@@ -1,6 +1,9 @@
 # --- Secretos ---
 .env
 
+# --- Permisos locales de Claude Code (de cada persona) ---
+.claude/settings.local.json
+
 # --- Datos personales y de proyectos (nunca a Git) ---
 mis_imagenes/*
 !mis_imagenes/.gitkeep
