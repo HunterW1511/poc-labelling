@@ -114,8 +114,9 @@ def cmd_precalentar(a):
         print(f"SAM 3 ya estaba listo (imgsz={es.get('imgsz')}, device={es.get('device')})")
         return 0
     cfg = http("GET", f"{LS}/api/projects/{a.proyecto}", token=True)["label_config"]
+    # L.10: abrir UNA tarea tambien precalienta; un /predict vacio ya no (no despertar con lotes): senal explicita
     http("POST", MOTOR + "/predict", {"tasks": [], "label_config": cfg, "project": str(a.proyecto),
-                                      "params": {}}, timeout=60)
+                                      "params": {"precalentar": True}}, timeout=60)
     print(f"Precalentando proyecto {a.proyecto}...")
     t0 = time.time()
     es = esperar(lambda: (_estado() or {}).get("listo") and _estado(), a.limite, 10, "SAM 3 interactivo")
@@ -412,7 +413,7 @@ def cmd_dataset(a):
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
               "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador", "cache_sam3")
-TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia", "cache_clic")      # necesitan el contenedor (torch, rutas /app)
+TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia", "cache_clic", "precalentar")      # necesitan el contenedor (torch, rutas /app)
 
 
 def _correr(cmd, timeout=600):

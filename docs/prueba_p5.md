@@ -96,3 +96,12 @@ Proyecto 17 (recreado), mismas 100 fotos, **sin cache en el hub** (`motor/cache_
 volvio a ~31 s y los kernels bajaron a menos de la mitad. **Nuevo cuello de botella: bajar la cache de Kaggle**
 (~4.3 MB por foto): en el trozo 2 tardo mas que el kernel. Sin esa bajada, el lote completo habria quedado hacia los
 ~8 min. El primer clic con el calentamiento de R4 sigue sin medirse.
+
+### Primer clic (06/11/2026, proyecto 17)
+
+Con el modelo cargado, el primer clic de la sesion tardo **0.2 s** (cache de disco que trajo el worker; R3: 7.5 s): el
+calentamiento de R4 funciona. En esta prueba la carga tardo 108 s porque el checkpoint ligero
+(`motor/cache_sam3/sam3_interactivo_<sha>.pt`) se aparto junto con la cache: **al apartar la cache, dejar ese archivo**.
+Con el checkpoint ligero, SAM 3 queda listo en 3 s (+0.4 s de calentamiento). Arreglado tambien `xd.py precalentar`
+(y `reiniciar-motor --precalentar`): desde L.10 mandaba un `/predict` vacio que ya no carga nada; ahora manda
+`params: {"precalentar": true}` (test `motor/test_precalentar.py`).

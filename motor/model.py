@@ -26,6 +26,9 @@ class MotorPreetiquetado(LabelStudioMLBase):
 
     def predict(self, tasks, context=None, **kwargs):
         perfil = leer_perfil(self.label_config)
+        if kwargs.get("precalentar"):                 # xd.py precalentar: carga explicita, sin encolar nada
+            interactivo.precalentar(perfil["imgsz"], perfil, self.project_id)
+            return ModelResponse(predictions=[])
         if context:                                   # Etapa 3: clic -> poligono (sincrono)
             if not tasks:
                 return ModelResponse(predictions=[])
