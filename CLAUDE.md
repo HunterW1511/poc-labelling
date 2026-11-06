@@ -15,7 +15,8 @@ Lee primero: `README.md` (que es y como se usa), el contexto del piloto (vive fu
   hub (`cola_trabajos`: SQLite local en `datos/`, solo lo usa el host, nunca en Drive),
   worker (`worker`, `entrenar`: viajan en cada zip; contrato en `docs/worker_contrato.md`).
 - Modulos puros (sin red ni disco, corren en host y Colab): `spec`, `perfil`, `plan`, `esquema_llm`, `asistente`,
-  `colores`, `comparar`, `banco_asistente`, `cuadernos`.
+  `colores`, `comparar`, `banco_asistente`, `cuadernos`, `guia` (siguiente paso de un proyecto: lo usan el tablero,
+  `xd.py guia` y el modo guiado de la UI).
 - `notebooks/worker.ipynb`: unico cuaderno de Colab (lanza `worker.py`). `motor/fixtures/`: datos fijos de tests. `_archivo/`: codigo muerto (no versionado).
 
 ## Reglas de oro

@@ -5,6 +5,7 @@ Prueba: python tablero.py   (imprime el JSON)"""
 import json, re, sys
 from pathlib import Path
 
+import guia
 import xd
 
 sys.path.insert(0, str(xd.RAIZ / "motor"))
@@ -168,60 +169,9 @@ def _datos(t, n, det, lotes, v):
     t["datasets"] = sorted(f.name for f in DATASETS.glob(f"dataset_p{n}_*.zip"))[-3:] if DATASETS.is_dir() else []
 
 
-def _sig(donde, texto, cmd=""):
-    return {"donde": donde, "texto": texto, "cmd": cmd}
-
-
 def siguiente(t):
-    s, n = t.get("slug"), t.get("n")
-    if t.get("protegido"):
-        return _sig("", "Proyecto protegido: solo lectura")
-    a = t.get("asistente") or {}
-    if a.get("ultimo") == "pendiente":
-        return _sig(ejecutor(), TEXTO_ESPERA.get(ejecutor(), TEXTO_ESPERA["colab"]))
-    if a.get("ultimo") == "error":
-        return _sig("cli", f"El asistente fallo en {ejecutor()}: revisa el error", f"python xd.py asistente-importar {s}")
-    if a.get("ultimo") == "resultado" and not a.get("aplicada"):
-        return _sig("cli", "Revisa el resultado del asistente y aplica la spec",
-                    f"python xd.py asistente-importar {s}")
-    if s and s.endswith("-ref"):                       # L.5: spec de referencia para comparar, no un proyecto
-        return _sig("", "Spec de referencia: solo para comparar (asistente-importar --comparar); no se crea proyecto")
-    if t.get("spec_errores"):
-        ne = len(t["spec_errores"])
-        return _sig("cli", f"Corrige la spec: {ne} error{'es' if ne != 1 else ''} (edita spec.json y vuelve a validar)",
-                    f"python xd.py validar {s}")
-    if s and not t.get("spec"):
-        return _sig("cli", "Describe el caso con el asistente, o parte de la plantilla (sin asistente)",
-                    f"python xd.py spec-nueva {s}")
-    if not n:
-        return _sig("cli", "Proyecto borrado; si lo quieres de nuevo, crealo" if t.get("borrado") else "Crea el proyecto en Label Studio", f"python xd.py crear-proyecto {s}")
-    ls, fotos, lo = t.get("ls") or {}, t.get("fotos") or [], t.get("lotes") or {}
-    tareas, anot = ls.get("task_number") or 0, ls.get("num_tasks_with_annotations") or 0
-    tienes = sum(f["tienes"] for f in fotos)
-    if lo.get("en_colab"):
-        return _sig(ejecutor(), TEXTO_ESPERA.get(ejecutor(), TEXTO_ESPERA["colab"]))
-    if lo.get("sin_importar"):
-        return _sig("cli", f"Importa las predicciones de {ejecutor()}", "python xd.py lote-importar --fijar-version")
-    if s and fotos and any(f["tienes"] == 0 for f in fotos):
-        return _sig("host", "Captura fotos: hay carpetas vacias", f"python capturar.py {s}")
-    if s and tienes > tareas:
-        return _sig("cli", f"Hay {tienes - tareas} fotos sin tarea: sincroniza", f"python xd.py sincronizar {s}")
-    if t.get("runs_sin_registrar"):
-        return _sig("cli", f"Registra el modelo entrenado en {ejecutor()}",
-                    f"python xd.py registrar {n} --run ultimo --activar")
-    if not (t.get("modelos") or {}).get("activo"):
-        if anot == 0 and not ls.get("total_predictions_number"):
-            return _sig("cli", "Pre-etiqueta una muestra con SAM 3", f"python xd.py preetiquetar {n} --muestra 30")
-        if anot == 0:
-            return _sig("label_studio", "Revisa la muestra en Label Studio y da Submit")
-        if t.get("datasets"):
-            return _sig(ejecutor(), f"Entrena en {ejecutor()} con el ultimo dataset (o exporta otro si revisaste mas)",
-                        f"python xd.py dataset {n} --drive")
-        return _sig("cli", "Exporta el dataset para entrenar", f"python xd.py dataset {n} --drive")
-    if tareas > anot:
-        return _sig("cli", f"{tareas - anot} tareas sin anotar: pre-etiqueta con el hijo",
-                    f"python xd.py preetiquetar {n} --muestra 30")
-    return _sig("cli", "Valida el modelo: aceptacion y prueba en vivo", f"python xd.py aceptacion {n}")
+    """P.7.1: el siguiente paso lo decide guia.py (puro); aqui solo se le pasa el ejecutor del entorno."""
+    return guia.siguiente(t, ejecutor())
 
 
 def proyecto_de(slug):
@@ -288,8 +238,7 @@ def ejecutor():
         return EJECUTOR
 
 
-TEXTO_ESPERA = {"colab": "Esperando a Colab: abre worker.ipynb y corre la celda 2",
-          "kaggle": "En Kaggle: 'Enviar a Kaggle' y, cuando termine, 'Traer de Kaggle' (Pasos externos)"}
+TEXTO_ESPERA = guia.TEXTO_ESPERA
 # Pasos externos: al desplegar (RunPod/AWS) solo se agrega otra columna aqui; la UI no cambia
 PASOS = {
     "asistente": {"colab": "Colab: abre worker.ipynb y corre la celda 2 (la 1 si la sesion es nueva)"},

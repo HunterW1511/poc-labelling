@@ -412,7 +412,7 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador", "cache_sam3")
+              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador", "cache_sam3", "guia")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia", "cache_clic", "precalentar", "importar_lote")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -1335,6 +1335,34 @@ def _linea_trabajo(t):
             f"{t['intentos']:>3}  {t['archivo']}{err}")
 
 
+def cmd_guia(a):
+    """P.7.1: el siguiente paso de cada proyecto (o de uno: N o slug), el mismo que muestra el modo guiado. Solo lee."""
+    import guia
+    import tablero
+    r = tablero.proyectos()
+    ts = r["tarjetas"]
+    if a.proyecto:
+        ts = [t for t in ts if a.proyecto in (str(t.get("n")), t.get("slug"))]
+        if not ts:
+            raise SystemExit(f"No encuentro el proyecto {a.proyecto!r} (numero de Label Studio o slug)")
+    elif not a.todos:
+        ts = [t for t in ts if not t.get("protegido")]
+    if a.json:
+        print(json.dumps([{"slug": t.get("slug"), "n": t.get("n"), "siguiente": t["siguiente"]} for t in ts],
+                         indent=1, ensure_ascii=True))
+        return 0
+    for v in r["avisos"]:
+        print(f"AVISO: {v}")
+    for t in ts:
+        g = t["siguiente"]
+        quien = f"{t.get('slug') or '-'} / {t.get('n') or '-'}"
+        etapa = f"paso {g['paso']}/{len(guia.FASES)} {g['fase']}" if g["paso"] else "sin paso"
+        print(f"{t['titulo']} ({quien}) | {etapa} | {g['quien']}: {g['texto']}")
+        if g["cmd"]:
+            print(f"    {g['cmd']}")
+    return 0
+
+
 def cmd_trabajos(a):
     C = _cola_mod()
     if a.reconciliar and a.reintentar:
@@ -1688,6 +1716,11 @@ def main():
     p.add_argument("--comparar", default="", help="slug de una spec de referencia (solo lectura)")
     p.add_argument("--si", action="store_true", help="P.5: con --aplicar, crea tambien el proyecto (crear-proyecto --aplicar)")
     p.set_defaults(f=cmd_asistente_importar)
+    p = sub.add_parser("guia", help="P.7: el siguiente paso de cada proyecto (el del modo guiado); solo lee")
+    p.add_argument("proyecto", nargs="?", default="", help="numero de Label Studio o slug (defecto: todos)")
+    p.add_argument("--todos", action="store_true", help="incluir los protegidos")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(f=cmd_guia)
     p = sub.add_parser("trabajos", help="cola de trabajos del hub (SQLite); --reconciliar compara con Drive")
     p.add_argument("--tipo", default="", choices=["", "asistente", "preetiquetado", "entrenamiento", "precodificacion"])
     p.add_argument("--estado", default="", help="filtra por estado (incluye terminados)")

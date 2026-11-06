@@ -67,6 +67,8 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
 - `python xd.py -h` lista todo; `python xd.py <comando> -h` detalla cada uno.
 - `python xd.py test [--solo host|motor] [-k texto] [-v]`: los tests del host y del contenedor; rc 0 solo si todos pasan.
 - `python xd.py cuadernos [--traer | --llevar] [--forzar] [--aplicar]`: el repo es la fuente de verdad de los cuadernos.
+- `python xd.py guia [N|slug] [--todos] [--json]`: el siguiente paso de cada proyecto (paso 1-9 del flujo, quien lo
+  hace y el comando); es lo mismo que muestra el modo guiado de la UI (P.7). Solo lee.
 - `python xd.py trabajos [--todos] [--tipo T] [--estado E]`: la cola de trabajos. `--reconciliar [--aplicar]` la
   pone al dia con lo que hay en Drive; `--reintentar ID [--aplicar]` vuelve a enviar un trabajo en error.
 - `python xd.py worker --enviar | --estado | --traer [--aplicar] [--limite MIN]`: envia a Kaggle los trabajos en espera
