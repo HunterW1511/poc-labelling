@@ -769,16 +769,22 @@ def cmd_modelos(a):
     if not reg["modelos"]:
         print(f"Sin modelos registrados ({f})")
         return 0
+    desactivar = getattr(a, "desactivar", False)
+    if a.activar and desactivar:
+        raise SystemExit("Usa --activar o --desactivar, no las dos")
     if a.activar:
         try:
             reg = registro.activar(reg, a.activar)
         except KeyError as e:
             raise SystemExit(str(e))
+    elif desactivar:                            # P.7: sin modelo activo, el pre-etiquetado vuelve a SAM 3
+        print(f"Activo: {reg.get('activo') or 'ninguno'} -> ninguno (el modelo sigue registrado)")
+        reg = dict(reg, activo=None)
     print("\n".join(registro.tabla(reg)))
-    if a.activar:
+    if a.activar or desactivar:
         if a.aplicar:
             _guardar(f, reg)
-            print(f"OK activo = {a.activar}")
+            print(f"OK activo = {a.activar or 'ninguno'}")
         else:
             print("SOLO REPORTE: usa --aplicar para cambiar el activo")
     return 0
@@ -1823,6 +1829,7 @@ def main():
     p = sub.add_parser("modelos", help="modelos registrados del proyecto (KPI = conteo)")
     p.add_argument("proyecto", type=int)
     p.add_argument("--activar", default="", help="nombre del modelo a dejar activo")
+    p.add_argument("--desactivar", action="store_true", help="dejar el proyecto sin modelo activo (vuelve a SAM 3)")
     p.add_argument("--aplicar", action="store_true")
     p.set_defaults(f=cmd_modelos)
     p = sub.add_parser("aceptacion", help="tasa de aceptacion del pre-etiquetado en las tareas revisadas")
