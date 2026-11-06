@@ -161,3 +161,10 @@ antes. Ademas el trozo 1 del lote y el de la precodificacion eran fotos distinta
   --aplicar` + `lote-importar` + `cache-importar` (revisar) -> `worker --enviar --aplicar` (trozo 2) -> ...
   P.5.R1 (daemon) encadena estos pasos.
 - Tests: `test_kaggle.test_envios_escalonados_por_trozo` y `test_xd_trabajos.test_preetiquetar_precodifica_las_mismas_tareas`.
+
+## Prueba real (P.4.R3, 05/11/2026): ver docs/prueba_p5.md
+
+100 fotos en trozos de 16 + 84: el trozo 1 quedo revisable (predicciones + cache) a los **6 min 51 s** de T0, mientras el
+trozo 2 corria en Kaggle; el lote completo ~12-13 min. Superposicion real, pero **la meta (< 5 min) no se cumplio**:
+P.4 sigue abierta con P.4.R4 (exportar el trozo 1 primero, encadenar el primer envio, sondeo rapido, sha de los pesos
+sin recalcular, calentar el clic) y una nueva medida.

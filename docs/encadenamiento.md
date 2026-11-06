@@ -158,3 +158,10 @@ python xd.py daemon [--intervalo 5] [--una-vez] [--aplicar]
   `python xd.py daemon --aplicar *> datos\daemon.log` en PowerShell).
 - Test: `test_kaggle.test_daemon_ciclo_completo` (reporte sin escribir; trozo 1 -> traer e importar lotes y cache ->
   trozo 2 -> traer e importar; todo `importado`).
+
+## Prueba real (P.5.R3, 05/11/2026): ver docs/prueba_p5.md
+
+El daemon (`--aplicar --intervalo 1`) encadeno sin intervencion: envio del trozo 1 -> estado (corriendo) -> traer e
+importar predicciones y cache -> envio del trozo 2 en cuanto el kernel quedo libre -> traer e importar. Todos los
+trabajos terminaron `importado`. Latencia observada: la deteccion del fin del kernel (Kaggle tarda en marcarlo
+`complete` + sondeo de 1 min) costo 1 min 51 s; se mejora en P.4.R4 con un sondeo mas rapido mientras corre un envio.
