@@ -42,7 +42,7 @@ ACCIONES = {
                      "opciones": {"--muestra": "int", "--modo": ["auto", "sam3", "hijo"]}},
     "lote-importar": {"id": None, "titulo": "Importar predicciones", "opciones": {"--fijar-version": "flag"}},
     "dataset": {"id": "n", "titulo": "Exportar dataset", "opciones": {"--formato": ["det", "seg", "ambos"], "--drive": "flag"}},
-    "registrar": {"id": "n", "aplicar": True, "titulo": "Registrar modelo", "opciones": {"--run": "str", "--activar": "flag"}},
+    "registrar": {"id": "n", "aplicar": True, "titulo": "Registrar modelo", "opciones": {"--run": "str", "--activar": "flag", "--forzar": "flag"}},
     "modelos": {"id": "n", "titulo": "Modelos"},
     "aceptacion": {"id": "n", "titulo": "Aceptacion", "opciones": {"--versiones": "str"}},
     "ver": {"id": "n", "ventana": True, "titulo": "Ver en vivo",

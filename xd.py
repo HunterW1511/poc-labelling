@@ -719,6 +719,9 @@ def _run(valor, proyecto):
     return r
 
 
+MIN_CONTEO_ACTIVAR = 0.5            # P.7 2.3: conteo exacto minimo en validacion para activar un modelo sin --forzar
+
+
 def cmd_registrar(a):
     registro, f, reg = _registro(a.proyecto)
     if a.run:
@@ -739,10 +742,17 @@ def cmd_registrar(a):
     dest = f.parent / nombre
     if (dest / "best.pt").exists():
         raise SystemExit(f"Ya existe {dest / 'best.pt'}; usa otro --nombre")
+    tasa = (met.get("conteo") or {}).get("tasa")
+    activar = a.activar
+    if activar and (tasa is None or tasa < MIN_CONTEO_ACTIVAR) and not getattr(a, "forzar", False):
+        activar = False                         # P.7 2.3: un modelo malo no reemplaza a SAM 3 sin que la persona lo pida
+        print(f"AVISO: conteo exacto en validacion {'?' if tasa is None else f'{tasa:.0%}'} < "
+              f"{MIN_CONTEO_ACTIVAR:.0%}: se REGISTRA pero NO se activa (el pre-etiquetado sigue con "
+              f"{reg.get('activo') or 'SAM 3'}). Revisa mas fotos y vuelve a entrenar, o usa --forzar")
     try:
         nuevo = registro.agregar(reg, nombre, met, f"p{a.proyecto}/{nombre}/best.pt", origen,
                                  time.strftime("%Y-%m-%dT%H:%M:%S"))
-        if a.activar:
+        if activar:
             nuevo = registro.activar(nuevo, nombre)
     except (ValueError, KeyError) as e:
         raise SystemExit(str(e))
@@ -1823,6 +1833,7 @@ def main():
     p.add_argument("--otro-proyecto", action="store_true", help="modelo entrenado en otro proyecto con las mismas clases")
     p.add_argument("--nombre", default="")
     p.add_argument("--activar", action="store_true")
+    p.add_argument("--forzar", action="store_true", help="activar aunque el conteo exacto quede bajo el minimo (50%%)")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")
     p.set_defaults(f=cmd_registrar)
 

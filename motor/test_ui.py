@@ -76,7 +76,44 @@ def test_caso_nuevo_y_su_titulo():
             xd.RAIZ = viejo
 
 
+
+def test_registrar_no_activa_un_modelo_malo():
+    """P.7 2.3: con conteo exacto < 50% en validacion, registrar --activar lo registra pero no lo activa (salvo --forzar)."""
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace as NS
+    viejo = xd.RAIZ
+    with tempfile.TemporaryDirectory() as t:
+        try:
+            xd.RAIZ = Path(t)
+            def modelo(nombre, tasa):
+                d = Path(t) / "entrada" / nombre
+                d.mkdir(parents=True)
+                (d / "best.pt").write_bytes(b"pt")
+                (d / "metricas.json").write_text(json.dumps({"proyecto": 9, "dataset": f"{nombre}.zip", "map50": 0.5,
+                    "conteo": {"exactas": round(tasa * 10), "imagenes": 10, "tasa": tasa}, "por_clase": {}}), encoding="utf-8")
+                return NS(proyecto=9, run="", pt=str(d / "best.pt"), metricas=str(d / "metricas.json"), nombre=nombre,
+                          otro_proyecto=False, activar=True, forzar=False, aplicar=True)
+            def activo():
+                return json.loads((Path(t) / "motor" / "modelos" / "p9" / "registro.json").read_text(encoding="utf-8"))["activo"]
+            out = io.StringIO()
+            with redirect_stdout(out):
+                assert xd.cmd_registrar(modelo("malo", 0.14)) == 0
+            assert "NO se activa" in out.getvalue() and activo() is None, out.getvalue()
+            with redirect_stdout(io.StringIO()):
+                assert xd.cmd_registrar(modelo("bueno", 0.66)) == 0
+            assert activo() == "bueno"
+            a = modelo("forzado", 0.2)
+            a.forzar = True
+            with redirect_stdout(io.StringIO()):
+                assert xd.cmd_registrar(a) == 0
+            assert activo() == "forzado"
+        finally:
+            xd.RAIZ = viejo
+
+
 if __name__ == "__main__":
+    test_registrar_no_activa_un_modelo_malo()
     test_caso_nuevo_y_su_titulo()
     test_daemon_desde_la_ui()
     print("TEST UI OK: daemon desde la UI con reporte previo; sus pasos no se aplican a mano mientras corre")
