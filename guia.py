@@ -21,6 +21,10 @@ TEXTO_ESPERA = {"colab": "Esperando a Colab: abre worker.ipynb y corre la celda 
 # proyecto tiene menos tareas, basta con revisarlas todas. La muestra inicial coincide con el minimo.
 MIN_REVISADAS = 50
 MUESTRA = MIN_REVISADAS                         # tamano de muestra sugerido para el primer pre-etiquetado
+# P.7 bloque 2.4: el modelo hijo solo vale la pena con un dataset grande (prueba P.7: 150 fotos, SAM 3 con 92% de
+# aceptacion y un hijo que no aporto). Por debajo: SAM 3 pre-etiqueta todo, se revisa y se entrena el modelo final.
+UMBRAL_HIJO = 300
+SIN_HIJO = [6, 7, 8]                            # pasos que se saltan en la ruta sin hijo
 
 
 def faltan_para_entrenar(anot, tareas):
@@ -52,12 +56,34 @@ def comando(a):
     return " ".join(partes)
 
 
-def _paso(paso, quien, texto, a=None, donde=None):
+def _paso(paso, quien, texto, a=None, donde=None, saltados=()):
     if quien not in QUIEN:
         raise ValueError(f"quien {quien!r}: {QUIEN}")
     return {"paso": paso, "fase": FASES[paso - 1] if paso else "", "quien": quien, "texto": texto, "accion": a,
             "donde": donde if donde is not None else {"ui": "cli", "espera": "", "nada": "", "editar": "cli"}.get(quien, quien),
-            "cmd": comando(a)}
+            "cmd": comando(a), "saltados": list(saltados)}
+
+
+def _sin_hijo(t, n, ls, lo, ee, ejecutor, anot, tareas, entrenar, minimo):
+    """Ruta para datasets chicos (< UMBRAL_HIJO): 4 Pre-etiquetar todo con SAM 3 -> 5 Verificar -> 9 Modelo final ->
+    10 En vivo; los pasos 6-8 quedan saltados."""
+    def p(*a, **k):
+        return _paso(*a, saltados=SIN_HIJO, **k)
+    if ee.get("entrenamiento"):
+        return p(9, "espera", f"Entrenando el modelo final en {ejecutor}", donde=ejecutor)
+    if t.get("runs_sin_registrar"):
+        return p(9, "ui", "Modelo final entrenado: registralo y activalo", accion("registrar", n=n, run="ultimo", activar=True))
+    if (t.get("modelos") or {}).get("activo"):
+        return p(10, "host", "Prueba el modelo final con la camara", accion("ver", n=n))
+    if lo.get("en_colab") or ee.get("preetiquetado"):
+        return p(4, "espera", "Pre-etiquetando con SAM 3 en " + ejecutor, donde=ejecutor)
+    if lo.get("sin_importar"):
+        return p(4, "ui", "Predicciones listas: subelas a Label Studio", accion("lote-importar", fijar_version=True))
+    if anot == 0 and not ls.get("total_predictions_number"):
+        return p(4, "ui", f"Pre-etiqueta las {tareas} fotos con SAM 3 (proyecto chico: sin modelo hijo)",
+                 accion("preetiquetar", n=n, muestra=tareas))
+    return p(5, "label_studio", f"Corrige y da Submit en Label Studio ({anot} de {tareas} revisadas)."
+             + (minimo or " Cuando termines, entrena el modelo final"), entrenar)
 
 
 def siguiente(t, ejecutor="colab"):
@@ -95,6 +121,11 @@ def siguiente(t, ejecutor="colab"):
         return _paso(3, "host", "Toma las fotos: hay carpetas vacias", accion("capturar", slug=s))
     if s and tienes > tareas:
         return _paso(3, "ui", f"Hay {tienes - tareas} fotos nuevas: subelas a Label Studio", accion("sincronizar", slug=s))
+    faltan = faltan_para_entrenar(anot, tareas)
+    entrenar = accion("dataset", n=n, drive=True) if not faltan else None
+    minimo = f" Para entrenar faltan {faltan} (minimo {min(MIN_REVISADAS, tareas)} revisadas)." if faltan else ""
+    if tareas < UMBRAL_HIJO:
+        return _sin_hijo(t, n, ls, lo, ee, ejecutor, anot, tareas, entrenar, minimo)
     pre, ver, ent = (7, 8, 9) if hijo else (4, 5, 6)
     if ee.get("entrenamiento"):
         return _paso(ent, "espera", f"Entrenando el modelo en {ejecutor}", donde=ejecutor)
@@ -107,9 +138,6 @@ def siguiente(t, ejecutor="colab"):
                      + ejecutor, donde=ejecutor)
     if lo.get("sin_importar"):
         return _paso(pre, "ui", "Predicciones listas: subelas a Label Studio", accion("lote-importar", fijar_version=True))
-    faltan = faltan_para_entrenar(anot, tareas)
-    entrenar = accion("dataset", n=n, drive=True) if not faltan else None
-    minimo = f" Para entrenar faltan {faltan} (minimo {min(MIN_REVISADAS, tareas)} revisadas)." if faltan else ""
     if not hijo:
         if anot == 0 and not ls.get("total_predictions_number"):
             return _paso(4, "ui", "Pre-etiqueta una muestra de fotos con SAM 3", accion("preetiquetar", n=n, muestra=MUESTRA))

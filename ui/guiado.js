@@ -44,12 +44,14 @@ function gLista() {
 }
 
 // ---- pasos (arriba del panel)
+function gsaltados(t) { return (t && !GNUEVO && (t.siguiente || {}).saltados) || []; }
 function gPasos(t) {
-  const p = GNUEVO ? 1 : gpaso(t), v = GVER || p;
+  const p = GNUEVO ? 1 : gpaso(t), v = GVER || p, sal = gsaltados(t);
   G("gpasos").innerHTML = FASES.map((f, i) => {
-    const k = i + 1, c = k < p ? "hecho" : k === p ? "actual" : "futuro";
-    return '<li class="' + c + (k === v ? " visto" : "") + '"' + (k <= p && !GNUEVO ? ' data-gver="' + k + '"' : "") + ">" +
-      '<span class="gnum">' + (k < p ? "&#10003;" : k) + "</span>" + esc(f) + "</li>";
+    const k = i + 1, s = sal.includes(k), c = s ? "saltado" : k < p ? "hecho" : k === p ? "actual" : "futuro";
+    return '<li class="' + c + (k === v ? " visto" : "") + '"' + (k <= p && !GNUEVO && !s ? ' data-gver="' + k + '"' : "") +
+      (s ? ' title="Proyecto chico: no hace falta un modelo hijo; se entrena directo el modelo final"' : "") + ">" +
+      '<span class="gnum">' + (s ? "&ndash;" : k < p ? "&#10003;" : k) + "</span>" + esc(f) + "</li>";
   }).join("");
 }
 
@@ -116,7 +118,8 @@ function gPre(t, actual, hijo) {
   const n = ((g.accion || {}).opciones || {})["--muestra"] || 30;
   return hijo
     ? "<p>El modelo hijo va a pre-etiquetar las <b>" + n + "</b> fotos que faltan; tu solo corriges.</p>" + gbtn("Pre-etiquetar con el hijo", 'data-g="accion"', true)
-    : "<p>SAM 3 dibuja una primera version en una muestra de fotos (" + (ls.task_number || 0) + " en total). Tu la corriges en el paso siguiente.</p>" +
+    : "<p>SAM 3 dibuja una primera version" + (gsaltados(t).length ? " en todas las fotos (proyecto chico: no hace falta un modelo hijo)."
+        : " en una muestra de fotos (" + (ls.task_number || 0) + " en total).") + " Tu la corriges en el paso siguiente.</p>" +
       '<div class="fila"><label>Fotos de la muestra <input id="gmuestra" type="number" min="5" max="' + (ls.task_number || 500) + '" value="' + n + '"></label>' +
       gbtn("Pre-etiquetar con SAM 3", 'data-g="accion"', true) + "</div>";
 }
@@ -132,7 +135,7 @@ function gVer(t, actual, final) {
     (g.accion ? gbtn(final ? "Ya revise: entrenar el modelo final" : "Ya revise la muestra: entrenar el modelo hijo", 'data-g="accion"') : "") + "</div>" +
     (g.accion ? "" : '<p class="chico">' + esc(g.texto) + "</p>");
 }
-PASO[5] = (t, a) => gVer(t, a, false);
+PASO[5] = (t, a) => gVer(t, a, gsaltados(t).length > 0);
 PASO[8] = (t, a) => gVer(t, a, true);
 function gModelo(t, actual, final) {
   const g = t.siguiente || {}, m = t.modelos || {};

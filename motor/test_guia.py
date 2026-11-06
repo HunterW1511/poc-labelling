@@ -9,18 +9,19 @@ import guia
 import ui
 
 
-def _t(**kw):
+def _t(tareas=5, **kw):
     """Tarjeta de un proyecto creado, con fotos y tareas al dia, sin anotar ni predecir."""
-    t = {"slug": "s", "n": 7, "spec": True, "fotos": [{"tienes": 5}], "ls": {"task_number": 5},
+    t = {"slug": "s", "n": 7, "spec": True, "fotos": [{"tienes": tareas}], "ls": {"task_number": tareas},
          "lotes": {"en_colab": [], "sin_importar": []}, "modelos": {}, "en_espera": {}}
     t.update(kw)
     return t
 
 
-def _ls(anot=0, pred=0, ver="sam3-x"):
-    return {"task_number": 5, "num_tasks_with_annotations": anot, "total_predictions_number": pred, "model_version": ver}
+def _ls(anot=0, pred=0, ver="sam3-x", tareas=5):
+    return {"task_number": tareas, "num_tasks_with_annotations": anot, "total_predictions_number": pred, "model_version": ver}
 
 
+G = 400                                         # proyecto grande (>= UMBRAL_HIJO): ciclo con modelo hijo
 HIJO = {"activo": "hijo-1", "n": 1}
 CASOS = [   # (tarjeta, paso, quien, accion, cmd)
     (_t(protegido=True), None, "nada", None, ""),
@@ -35,28 +36,46 @@ CASOS = [   # (tarjeta, paso, quien, accion, cmd)
     # 3. Fotos
     (_t(fotos=[{"tienes": 0}, {"tienes": 3}]), 3, "host", "capturar", "python capturar.py s"),
     (_t(fotos=[{"tienes": 9}]), 3, "ui", "sincronizar", "python xd.py sincronizar s"),
-    # 4-6. Pre-etiquetar, verificar y modelo hijo
-    (_t(), 4, "ui", "preetiquetar", "python xd.py preetiquetar 7 --muestra 50"),
+    # Proyecto chico (2.4): 4 pre-etiquetar todo con SAM 3 -> 5 verificar -> 9 modelo final -> 10 en vivo
+    (_t(), 4, "ui", "preetiquetar", "python xd.py preetiquetar 7 --muestra 5"),
     (_t(lotes={"en_colab": ["lote_p7_x.zip"]}), 4, "espera", None, ""),
     (_t(en_espera={"preetiquetado": 1}), 4, "espera", None, ""),
     (_t(lotes={"sin_importar": ["lote_p7_x_pred.json"]}), 4, "ui", "lote-importar", "python xd.py lote-importar --fijar-version"),
     (_t(ls=_ls(pred=5)), 5, "label_studio", None, ""),
     (_t(ls=_ls(anot=2, pred=5)), 5, "label_studio", None, ""),                 # 2.2: faltan para el minimo
     (_t(ls=_ls(anot=5, pred=5)), 5, "label_studio", "dataset", "python xd.py dataset 7 --drive"),
-    (_t(ls=_ls(anot=2, pred=5), en_espera={"entrenamiento": 1}), 6, "espera", None, ""),
-    (_t(ls=_ls(anot=2, pred=5), runs_sin_registrar=["r1"]), 6, "ui", "registrar",
+    (_t(ls=_ls(anot=5, pred=5), en_espera={"entrenamiento": 1}), 9, "espera", None, ""),
+    (_t(ls=_ls(anot=5, pred=5), runs_sin_registrar=["r1"]), 9, "ui", "registrar",
      "python xd.py registrar 7 --run ultimo --activar"),
-    # 7-10. Con el hijo activo
-    (_t(ls=_ls(anot=2, pred=5), modelos=HIJO), 7, "ui", "preetiquetar", "python xd.py preetiquetar 7 --muestra 3 --modo hijo"),
-    (_t(ls=_ls(anot=2, pred=5), modelos=HIJO, en_espera={"preetiquetado": 1}), 7, "espera", None, ""),
-    (_t(ls=_ls(anot=2, pred=8, ver="hijo-1-abc"), modelos=HIJO), 8, "label_studio", None, ""),
-    (_t(ls=_ls(anot=5, pred=8, ver="hijo-1-abc"), modelos=HIJO), 8, "label_studio", "dataset", "python xd.py dataset 7 --drive"),
-    (_t(ls=_ls(anot=5, pred=8), modelos=HIJO), 9, "ui", "dataset", "python xd.py dataset 7 --drive"),
-    (_t(ls=_ls(anot=5, pred=8, ver="hijo-1-abc"), modelos=HIJO, en_espera={"entrenamiento": 1}), 9, "espera", None, ""),
-    (_t(ls=_ls(anot=5, pred=8, ver="hijo-1-abc"), modelos=HIJO, runs_sin_registrar=["r2"]), 9, "ui", "registrar",
+    (_t(ls=_ls(anot=5, pred=5), modelos=HIJO), 10, "host", "ver", "python xd.py ver 7"),
+    # Proyecto grande: ciclo con hijo (4-6) y luego 7-10
+    (_t(G), 4, "ui", "preetiquetar", "python xd.py preetiquetar 7 --muestra 50"),
+    (_t(G, ls=_ls(pred=50, tareas=G)), 5, "label_studio", None, ""),
+    (_t(G, ls=_ls(anot=60, pred=60, tareas=G)), 5, "label_studio", "dataset", "python xd.py dataset 7 --drive"),
+    (_t(G, ls=_ls(anot=60, pred=60, tareas=G), en_espera={"entrenamiento": 1}), 6, "espera", None, ""),
+    (_t(G, ls=_ls(anot=60, pred=60, tareas=G), runs_sin_registrar=["r1"]), 6, "ui", "registrar",
      "python xd.py registrar 7 --run ultimo --activar"),
-    (_t(ls=_ls(anot=5, pred=8, ver="hijo-2-abc"), modelos={"activo": "hijo-2", "n": 2}), 10, "host", "ver", "python xd.py ver 7"),
+    (_t(G, ls=_ls(anot=60, pred=60, tareas=G), modelos=HIJO), 7, "ui", "preetiquetar",
+     "python xd.py preetiquetar 7 --muestra 340 --modo hijo"),
+    (_t(G, ls=_ls(anot=60, pred=60, tareas=G), modelos=HIJO, en_espera={"preetiquetado": 1}), 7, "espera", None, ""),
+    (_t(G, ls=_ls(anot=60, pred=400, ver="hijo-1-abc", tareas=G), modelos=HIJO), 8, "label_studio", "dataset",
+     "python xd.py dataset 7 --drive"),
+    (_t(G, ls=_ls(anot=G, pred=400, tareas=G), modelos=HIJO), 9, "ui", "dataset", "python xd.py dataset 7 --drive"),
+    (_t(G, ls=_ls(anot=G, pred=400, ver="hijo-1-abc", tareas=G), modelos=HIJO, en_espera={"entrenamiento": 1}), 9,
+     "espera", None, ""),
+    (_t(G, ls=_ls(anot=G, pred=400, ver="hijo-1-abc", tareas=G), modelos=HIJO, runs_sin_registrar=["r2"]), 9, "ui",
+     "registrar", "python xd.py registrar 7 --run ultimo --activar"),
+    (_t(G, ls=_ls(anot=G, pred=400, ver="hijo-2-abc", tareas=G), modelos={"activo": "hijo-2", "n": 2}), 10, "host", "ver",
+     "python xd.py ver 7"),
 ]
+
+
+def test_saltados_en_la_ruta_sin_hijo():
+    """2.4: con menos de UMBRAL_HIJO fotos se saltan los pasos 6-8; con mas, no."""
+    assert guia.siguiente(_t(ls=_ls(anot=5, pred=5)), "kaggle")["saltados"] == [6, 7, 8]
+    assert guia.siguiente(_t(G, ls=_ls(anot=60, pred=60, tareas=G)), "kaggle")["saltados"] == []
+    g = guia.siguiente(_t(150, ls=_ls(anot=149, pred=150, tareas=150)), "kaggle")      # la prueba P.7
+    assert g["paso"] == 5 and "modelo final" in g["texto"] and g["accion"]["accion"] == "dataset", g
 
 
 def test_cada_rama():
