@@ -238,9 +238,12 @@ def estado_kernel(kernel, correr=subprocess.run):
 
 
 # P.4.R6: la salida se baja en dos fases. La CLI (2.2.5) aplica --file-pattern con re.search sobre el nombre de cada
-# archivo y los baja de uno en uno: primero todo menos la cache (KB: _pred.json, indices, logs), luego los .pt (MB).
-PATRON_SIN_CACHE = r"^(?!.*\.pt$)"
-PATRON_CACHE = r"\.pt$"
+# archivo y los baja de uno en uno: primero todo menos la cache (KB: _pred.json, indices, logs y los pesos best.pt de
+# un entrenamiento), luego la cache de SAM 3 (MB). La cache se reconoce por su clave (cache_sam3.CLAVE), no por ser .pt:
+# un best.pt excluido por error no se bajaria nunca si el envio no llevaba precodificacion.
+_CLAVE_PT = r"(^|/)[0-9a-f]{64}_\d{2,5}_[0-9a-f]{12}_[0-9][0-9A-Za-z.+-]*\.pt$"
+PATRON_SIN_CACHE = r"^(?!.*" + _CLAVE_PT + ")"
+PATRON_CACHE = _CLAVE_PT
 
 
 def bajar_salida(kernel, destino, correr=subprocess.run, patron=None):

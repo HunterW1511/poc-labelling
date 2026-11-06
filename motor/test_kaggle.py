@@ -21,6 +21,10 @@ def _falla(exc, f, *a, **kw):
     raise AssertionError(f"se esperaba {exc.__name__}")
 
 
+CLAVE_T = {s_: c * 64 + "_644_" + "e" * 12 + "_8.4.174" for s_, c in (("t01", "1"), ("t02", "2"))}
+K1, K2 = "c" * 64 + "_644_" + "e" * 12 + "_8.4.174", "d" * 64 + "_644_" + "e" * 12 + "_8.4.174"
+
+
 def _salida(dest, archivos, patron=None):
     """Escribe la salida simulada de un kernel. Como la CLI (--file-pattern, re.search sobre el nombre), solo los
     archivos que cumplen patron; el log del kernel llega siempre."""
@@ -34,13 +38,16 @@ def _salida(dest, archivos, patron=None):
 
 def test_patrones_de_las_dos_fases():
     """P.4.R6: la fase pred baja todo menos los .pt; la fase cache, solo los .pt; bajar_salida pasa --file-pattern."""
-    nombres = ["lotes/lote_p3_x_pred.json", "lotes/pre_p3_y_cache.json", "lotes/cache/abc_644_def_8.4.174.pt",
-               "envio_resultado.json", "runs/dataset_p4_x/weights/best.pt", "lote.pt.json"]
+    clave = "a" * 64 + "_644_" + "b" * 12 + "_8.4.174"
+    nombres = ["lotes/lote_p3_x_pred.json", "lotes/pre_p3_y_cache.json", f"lotes/cache/{clave}.pt",
+               "envio_resultado.json", "runs/dataset_p4_x/weights/best.pt", "runs/dataset_p4_x/weights/last.pt",
+               "lote.pt.json", f"lotes/cache/{clave}.pt.tmp"]
     pred = [n for n in nombres if re.search(K.PATRON_SIN_CACHE, n)]
     cache = [n for n in nombres if re.search(K.PATRON_CACHE, n)]
-    assert cache == ["lotes/cache/abc_644_def_8.4.174.pt", "runs/dataset_p4_x/weights/best.pt"], cache
+    assert cache == [f"lotes/cache/{clave}.pt"], cache                     # los pesos de un entrenamiento NO son cache
     assert sorted(pred + cache) == sorted(nombres)                        # cada archivo en una sola fase
-    assert re.search(K.PATRON_CACHE, "abc.pt") and not re.search(K.PATRON_SIN_CACHE, "abc.pt")   # nombre sin carpeta
+    assert re.search(K.PATRON_CACHE, clave + ".pt") and not re.search(K.PATRON_SIN_CACHE, clave + ".pt")   # sin carpeta
+    assert re.search(K.PATRON_SIN_CACHE, "best.pt") and not re.search(K.PATRON_CACHE, "best.pt")
     with tempfile.TemporaryDirectory() as t:
         cli = CLI([(0, "")])
         (Path(t) / "sal" / "viejo.txt").parent.mkdir(parents=True)
@@ -337,7 +344,7 @@ def test_envios_escalonados_por_trozo():
                 (caches if patron == K.PATRON_CACHE else bajados).append(k)
                 ns = ["lote_p3_x_t01", "pre_p3_y_t01"] if k.endswith("/1") else ["lote_p3_x_t02", "pre_p3_y_t02"]
                 arch = {f"lotes/{n}_pred.json" if n.startswith("lote") else f"lotes/{n}_cache.json": "{}" for n in ns}
-                arch[f"lotes/cache/{ns[1]}.pt"] = b"pt"
+                arch[f"lotes/cache/{CLAVE_T[ns[1][-3:]]}.pt"] = b"pt"
                 _salida(dest, arch, patron)
                 return 0, ""
             K.bajar_salida = bajar
@@ -359,7 +366,7 @@ def test_envios_escalonados_por_trozo():
             rc, out = correr(traer=True, aplicar=True)                                  # el 1 se trae aunque el 2 corra
             assert bajados == ["emi/xd-worker/1"] and "sigue en Kaggle (running" in out, out
             assert caches == ["emi/xd-worker/1"] and "cache 1 archivo(s)" in out, out        # P.4.R6: fase todo
-            assert (esp / "lotes" / "cache" / "pre_p3_y_t01.pt").exists()
+            assert (esp / "lotes" / "cache" / f"{CLAVE_T['t01']}.pt").exists()
             with closing(C.abrir(db)) as con:
                 est = {x["archivo"]: x["estado"] for x in C.listar(con)}
                 assert est["lote_p3_x_t01.zip"] == "listo" and est["pre_p3_y_t01.zip"] == "listo"
@@ -409,7 +416,8 @@ def test_traer_en_dos_fases():
                     falla[0] -= 1
                     return 1, "se corto"
                 _salida(dest, {"lotes/lote_p3_x_t01_pred.json": "{}", "lotes/pre_p3_x_t01_cache.json": "{}",
-                               "lotes/cache/k1.pt": b"pt", "lotes/cache/k2.pt": b"pt"}, patron)
+                               f"lotes/cache/{K1}.pt": b"pt", f"lotes/cache/{K2}.pt": b"pt",
+                               "runs/dataset_p3_x/weights/best.pt": b"w"}, patron)
                 return 0, ""
             K.bajar_salida = bajar
             def correr(**kw):
@@ -423,7 +431,8 @@ def test_traer_en_dos_fases():
                     return C.envio(con, "envio_1")["estado"]
             rc, out = correr()                                                  # reporte: solo la fase pred baja
             assert rc == 0 and bajadas == [K.PATRON_SIN_CACHE] and "se baja despues, en la fase cache" in out, out
-            assert "COPIARIA lotes/lote_p3_x_t01_pred.json" in out and "k1.pt" not in out and envio() == "lanzado", out
+            assert "COPIARIA lotes/lote_p3_x_t01_pred.json" in out and K1 not in out and envio() == "lanzado", out
+            assert "COPIARIA runs/dataset_p3_x/weights/best.pt" in out, out      # los pesos viajan en la fase pred
             rc, out = correr(fase="pred", aplicar=True)
             assert rc == 0 and envio() == "parcial" and "1 con la cache pendiente" in out, out
             assert (esp / "lotes" / "lote_p3_x_t01_pred.json").exists() and not (esp / "lotes" / "cache").exists()
@@ -436,7 +445,7 @@ def test_traer_en_dos_fases():
             assert rc == 1 and "sigue pendiente" in out and envio() == "parcial", out
             rc, out = correr(fase="cache", aplicar=True)
             assert rc == 0 and envio() == "traido" and "cache 2 archivo(s)" in out, out
-            assert sorted(f.name for f in (esp / "lotes" / "cache").iterdir()) == ["k1.pt", "k2.pt"]
+            assert sorted(f.name for f in (esp / "lotes" / "cache").iterdir()) == sorted([f"{K1}.pt", f"{K2}.pt"])
             assert not (t / "datos" / "kaggle" / "salida" / "envio_1_cache").exists()   # sin copia duplicada
             rc, out = correr(fase="cache", aplicar=True)
             assert rc == 0 and "Sin cache de SAM 3 pendiente" in out, out
