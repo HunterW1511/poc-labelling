@@ -20,6 +20,7 @@ POR_GPU = {"preetiquetado-sam3": ("manifiesto.json", "tareas"), "preetiquetado-h
            "precodificacion": ("fotos.json", "fotos")}
 MIN_PARTIR = 16                                  # con menos fotos no compensa cargar otro SAM 3 (~30 s)
 VERIFICADO = {}                                  # ruta de sam3.pt -> sha256 ya comprobado
+PESOS_VERIFICADOS = {}                           # P.4.R4: version de xd-pesos verificada entera en este envio
 
 
 def log(*a):
@@ -39,11 +40,18 @@ def sha256(ruta, bloque=8 << 20):
     return h.hexdigest()
 
 
-def verificar_pesos(pesos_json):
+def verificar_pesos(pesos_json, completo=True):
     """-> ruta de sam3.pt si su sha256 coincide con pesos.json; si no, error (nunca usar pesos corruptos).
+    completo=False (P.4.R4): esa version del dataset ya se verifico entera en un envio anterior: solo el tamano.
     El sha queda en VERIFICADO (la precodificacion lo pone en la clave de la cache)."""
     info = json.loads(Path(pesos_json).read_text(encoding="utf-8"))
     pt = Path(pesos_json).parent / info["archivo"]
+    if not completo:
+        if pt.stat().st_size != info["bytes"]:
+            raise RuntimeError(f"{pt.name}: {pt.stat().st_size} bytes, se esperaban {info['bytes']}")
+        log(f"pesos OK: {pt} (tamano; sha verificado antes en esta version del dataset)")
+        VERIFICADO[str(pt)] = info["sha256"]
+        return pt
     t = time.time()
     real = sha256(pt)
     if real != info["sha256"]:
@@ -236,7 +244,8 @@ def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None,
             else:
                 estados.append(worker.procesar(d, listos[stem][1], cache, stem=stem, ent=worker.entorno(proveedor), **op))
             previo = g
-    res = {"esquema": 1, "envio": envio.get("envio"), "fin": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "estados": estados}
+    res = {"esquema": 1, "envio": envio.get("envio"), "fin": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "estados": estados,
+           "pesos_verificados": PESOS_VERIFICADOS.get("version")}
     (salida / "envio_resultado.json").write_text(json.dumps(res, ensure_ascii=True, indent=1), encoding="utf-8")
     log(f"envio {envio.get('envio')}: {sum(1 for e in estados if e.get('ok'))}/{len(estados)} OK")
     return estados
@@ -254,7 +263,10 @@ def main():
         f_pesos = buscar(ENTRADA, "pesos.json")
         if f_pesos is None:
             raise SystemExit("no encuentro pesos.json en /kaggle/input (dataset xd-pesos)")
-        sam3 = verificar_pesos(f_pesos)
+        p = envio.get("pesos") or {}
+        sam3 = verificar_pesos(f_pesos, completo=p.get("verificar_sha", True))
+        if p.get("verificar_sha", True) and p.get("version"):
+            PESOS_VERIFICADOS["version"] = p["version"]
     ejecutar(envio, f_envio.parent, SALIDA, TMP, sam3_pt=sam3)
     shutil.rmtree(TMP, ignore_errors=True)
     log(f"total {time.time() - t0:.0f} s")

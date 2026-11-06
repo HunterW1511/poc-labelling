@@ -76,4 +76,18 @@ with tempfile.TemporaryDirectory() as t:
         I._est.clear()
         I._est.update(viejo[2])
         I._cache.clear()
+class Calentable(Pred):                              # P.4.R4: _calentar hace una inferencia falsa y deja todo limpio
+    args = type("A", (), {"conf": 0.5})()
+    llamadas = []
+
+    def __call__(self, **kw):
+        Calentable.llamadas.append((kw, {k: tuple(v.shape) if hasattr(v, "shape") else [tuple(x.shape) for x in v]
+                                         for k, v in self.features.items()}))
+        return []
+
+
+c = Calentable()
+I._calentar(c, 644)
+kw, formas = Calentable.llamadas[0]
+assert kw["points"] == [[[322, 322]]] and formas["image_embed"] == (1, 256, 4, 4) and c.features is None
 print("TEST CACHE_CLIC OK: RAM -> disco -> codificar; cache danada o sin sha -> codifica")

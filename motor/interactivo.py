@@ -108,10 +108,31 @@ def _predictor_sin_candado(imgsz):
             p = SAM3Predictor(overrides=cola.overrides_sam3(imgsz, 0.01))
             p.set_image(np.zeros((imgsz, imgsz, 3), np.uint8))       # fuerza la carga de pesos
             origen = "sam3.pt completo"
+        if INTERACTIVO == "liviano":
+            _calentar(p, imgsz)                   # P.4.R4: la primera inferencia paga ~7 s de inicializacion
         _est["pred"], _est["imgsz"], _est["origen"] = p, imgsz, origen
         log.info("SAM 3 interactivo %s listo (imgsz=%d, device=%s, %s) en %.0fs", INTERACTIVO, imgsz,
                  cola.dispositivo(), origen, time.time() - t0)
     return _est["pred"]
+
+
+def _calentar(p, imgsz):
+    """Una inferencia falsa (imagen negra, features en cero, un punto) para que el primer clic real no pague la
+    inicializacion de PyTorch. Nunca falla la carga."""
+    try:
+        import torch
+        t = time.time()
+        p.setup_source(np.zeros((imgsz, imgsz, 3), np.uint8))
+        e, a, b = cache_sam3.espacial_de(p._bb_feat_sizes)
+        p.features = {"image_embed": torch.zeros(1, 256, *e, device=p.device),
+                      "high_res_feats": [torch.zeros(1, 32, *a, device=p.device), torch.zeros(1, 64, *b, device=p.device)]}
+        p.args.conf = 0.0
+        p(points=[[[imgsz // 2, imgsz // 2]]], labels=[[1]], multimask_output=True)
+        log.info("clic calentado en %.1fs", time.time() - t)
+    except Exception:
+        log.exception("no pude calentar el clic (el primer clic sera mas lento)")
+    finally:
+        p.features = None
 
 
 def _pre_predictor():

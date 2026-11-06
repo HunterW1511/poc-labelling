@@ -217,6 +217,8 @@ def _prioridad(valor, proyecto):
 def cmd_preetiquetar(a):
     extra = ["--muestra", a.muestra, "--semilla", a.semilla, "--minimo", a.minimo, "--trozo", a.trozo] + \
             _prioridad(a.prioridad, a.proyecto)
+    if a.aplicar and a.trozo:                     # P.4.R4: el trozo 1 sale antes de exportar el resto
+        return _preetiquetar_por_trozos(a, extra)
     if not a.aplicar:
         args = [a.proyecto, *extra, "--modo", a.modo, "--reporte"] + (["--todas"] if a.todas else [])
         rc = en_motor("exportar_lote.py", *args)[0]
@@ -225,6 +227,50 @@ def cmd_preetiquetar(a):
         return rc
     a.limite, a.tareas, a.extra = 0, "", extra
     return cmd_lote_exportar(a)
+
+def _preetiquetar_por_trozos(a, extra):
+    """P.4.R4: la muestra se calcula una vez (reporte); cada trozo se exporta (lote + su precodificacion) y queda en la
+    cola en orden. Con --enviar, el trozo 1 sale a Kaggle antes de exportar el resto (minutos hasta la primera tarea)."""
+    T = _transporte()
+    T.requerir("lotes")
+    sin_trozo = [x for i, x in enumerate(extra) if x != "--trozo" and (i == 0 or extra[i - 1] != "--trozo")]
+    rc, out = en_motor("exportar_lote.py", a.proyecto, *sin_trozo, "--modo", a.modo, "--reporte",
+                       *(["--todas"] if a.todas else []))
+    m = re.search(r"REPORTE \d+ tareas .*\| ids ([\d,]+)", out)
+    if rc or not m:
+        return rc or 1
+    ids = [int(x) for x in m.group(1).split(",") if x]
+    k = int(a.trozo)
+    partes = [p for p in (ids[:k], ids[k:]) if p]
+    sello = time.strftime("%Y%m%d-%H%M%S")
+    grupo_l, grupo_p = f"lote_p{a.proyecto}_{sello}", f"pre_p{a.proyecto}_{sello}"
+    print(f"P.4.R4: {len(ids)} tareas en {len(partes)} trozo(s) ({' + '.join(str(len(p)) for p in partes)}); "
+          "el trozo 1 primero")
+    for i, parte in enumerate(partes, 1):
+        suf = f"t{i:02d}"
+        rc, out = en_motor("exportar_lote.py", a.proyecto, "--tareas", ",".join(map(str, parte)), "--todas",
+                           "--modo", a.modo, "--grupo", grupo_l, "--sufijo", suf)
+        z = re.search(r"-> (\S+\.zip)", out)
+        if rc or not z:
+            print(f"AVISO: exportar el trozo {i} fallo (rc {rc})")
+            return rc or 1
+        zp = LOTES_LOCAL / PurePosixPath(z.group(1)).name
+        _en_cola(zp.name, _q_crear, "preetiquetado", zp.name, "pendiente", proyecto=a.proyecto, grupo=grupo_l)
+        print(f"Enviado ({T.nombre}): {T.enviar('lotes', zp)}")
+        _en_cola(zp.name, _q_enviado, "preetiquetado", zp.name)
+        if getattr(a, "precodificar", True):
+            r = _precodificar(a.proyecto, T, tareas=parte, grupo=grupo_p, sufijo=suf)
+            if r not in (0, 3):
+                print(f"AVISO: la precodificacion del trozo {i} salio con rc {r}")
+        if i == 1 and getattr(a, "enviar", False):
+            if T.nombre == "kaggle":
+                print("--enviar: el trozo 1 sale a Kaggle ahora")
+                _paso("enviar el trozo 1", cmd_worker, NS_(enviar=True, estado=False, traer=False, limite=0, aplicar=True))
+            else:
+                print("--enviar solo aplica con TRANSPORTE=kaggle")
+    print(_siguiente_externo(T, "python xd.py lote-importar  (o python xd.py daemon --aplicar)"))
+    return 0
+
 
 def cmd_lote_importar(a):
     drive = _transporte().requerir("lotes")
@@ -268,11 +314,12 @@ def cmd_precodificar(a):
     return 0 if rc == 3 else rc
 
 
-def _precodificar(proyecto, T, trozo=0, todas=False, limite=0, tareas=()):
+def _precodificar(proyecto, T, trozo=0, todas=False, limite=0, tareas=(), grupo="", sufijo=""):
     """Exporta la precodificacion (opcionalmente de tareas dadas, en su orden) y la deja en la cola.
     -> 0 ok | 3 nada que precodificar (todas con cache) | otro rc de exportar_pre.py"""
     args = [proyecto] + (["--todas"] if todas else []) + (["--limite", limite] if limite else []) + ["--trozo", trozo] + \
-           (["--tareas", ",".join(str(i) for i in tareas)] if tareas else [])
+           (["--tareas", ",".join(str(i) for i in tareas)] if tareas else []) + \
+           (["--grupo", grupo, "--sufijo", sufijo] if grupo else [])
     rc, out = en_motor("exportar_pre.py", *args)
     if rc:
         if "ya tienen cache" in out:
@@ -773,6 +820,20 @@ def _leer_error(c):
     return leer
 
 
+def _pesos_verificados():
+    f = _kaggle_dir() / "pesos_verificados.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _guardar_pesos_verificados(d):
+    f = _kaggle_dir() / "pesos_verificados.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(d), encoding="utf-8")
+
+
 def _trozo(nombre):
     """Numero de trozo de un zip de trabajo (..._t02.zip -> 2); sin trozo cuenta como 1 (va en el primer envio)."""
     m = re.search(r"_t(\d{2})\.zip$", nombre)
@@ -865,7 +926,14 @@ def cmd_worker(a):
             nombre = f"envio_{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"   # unico (daemon)
             carpeta, kcarp = _kaggle_dir() / "envio", _kaggle_dir() / "kernel"
             try:
-                K.armar_envio([(c, f) for _, c, f in ahora], carpeta, u, nombre, u)
+                vp = K.version_dataset(f"{u}/{K.SLUG_PESOS}") if any(t["tipo"] in ("preetiquetado", "precodificacion")
+                                                                    for t, _, _ in ahora) else None
+                verificar = vp is None or vp != _pesos_verificados().get("version")
+                K.armar_envio([(c, f) for _, c, f in ahora], carpeta, u, nombre, u,
+                              pesos={"version": vp, "verificar_sha": verificar} if vp is not None else None)
+                if vp is not None:
+                    print(f"pesos xd-pesos v{vp}: " + ("sha256 completo en el kernel (version nueva)" if verificar
+                                                        else "ya verificada; el kernel solo comprueba el tamano"))
                 ds = f"{u}/{K.SLUG_ENVIOS}"
                 t0 = time.time()
                 rc, out = K.subir_envio(carpeta, bool(K.estado_dataset(ds)), nombre)
@@ -929,6 +997,12 @@ def cmd_worker(a):
             return 0
         for e, est, msg, sal in listos:
             K.integrar(sal, T.raiz)
+            try:                                      # P.4.R4: el kernel verifico entera esta version de xd-pesos
+                v = json.loads((sal / "envio_resultado.json").read_text(encoding="utf-8")).get("pesos_verificados")
+                if v:
+                    _guardar_pesos_verificados({"version": v, "fecha": time.strftime("%Y-%m-%dT%H:%M:%S")})
+            except (OSError, ValueError):
+                pass
             if e["estado"] in ("lanzado", "corriendo"):
                 C.marcar_envio(con, e["nombre"], ENVIO_DE_KERNEL[est], msg or None)
         c = _carpetas_transporte()
@@ -1332,6 +1406,23 @@ def ciclo_daemon(aplicar):
         _paso("enviar el siguiente trozo", cmd_worker, w(enviar=True))
 
 
+SONDEO_RAPIDO = 20                               # P.4.R4: segundos entre ciclos mientras un envio corre en Kaggle
+
+
+def _envio_en_curso():
+    """Hay un envio a Kaggle lanzado o corriendo (el daemon sondea mas seguido para traerlo en cuanto termine)."""
+    try:
+        con = _cola(crear=False)
+        if not con:
+            return False
+        try:
+            return any(e["estado"] in ("lanzado", "corriendo") for e in _cola_mod().envios_pendientes(con, "kaggle"))
+        finally:
+            con.close()
+    except Exception:
+        return False
+
+
 def cmd_daemon(a):
     """P.5.R1: encadena los pasos externos cada N minutos: estado -> traer -> importar (lotes y cache) -> enviar el
     siguiente trozo. Sin --aplicar solo reporta. Ctrl+C lo detiene."""
@@ -1345,8 +1436,10 @@ def cmd_daemon(a):
             ciclo_daemon(a.aplicar)
             if a.una_vez:
                 return 0
-            print(f"daemon: siguiente ciclo en {a.intervalo} min (Ctrl+C para detener)")
-            time.sleep(max(1, a.intervalo) * 60)
+            espera = SONDEO_RAPIDO if _envio_en_curso() else max(1, a.intervalo) * 60
+            print(f"daemon: siguiente ciclo en {espera // 60} min {espera % 60} s"
+                  + (" (hay un envio corriendo: sondeo rapido)" if espera == SONDEO_RAPIDO else "") + " (Ctrl+C para detener)")
+            time.sleep(espera)
     except KeyboardInterrupt:
         print("\ndaemon: detenido")
         return 0
@@ -1389,6 +1482,7 @@ def main():
     p.add_argument("--modo", choices=["auto", "sam3", "hijo"], default="auto")
     p.add_argument("--todas", action="store_true", help="incluir tareas que ya tienen la version")
     p.add_argument("--trozo", type=int, default=16, help="P.4: si hay mas tareas, genera 2 zips (t01 + t02); 0 = sin trozos")
+    p.add_argument("--enviar", action="store_true", help="P.4.R4: con TRANSPORTE=kaggle, el trozo 1 sale en cuanto se exporta")
     p.add_argument("--sin-precodificar", dest="precodificar", action="store_false",
                    help="P.4.R1: no precodificar las mismas tareas (por defecto si: el clic liviano necesita la cache)")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta")

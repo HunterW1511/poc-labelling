@@ -367,18 +367,20 @@ def test_daemon_ciclo_completo():
             for n in ("lote_p3_x_t01.zip", "lote_p3_x_t02.zip"):
                 C.crear(con, "preetiquetado", n, proyecto=3, estado="enviado", grupo="lote_p3_x")
         clave = CS.clave("a" * 64, 644, "b" * 64, "8.4.174")
-        ks = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida")
+        ks = ("estado_kernel", "estado_dataset", "subir_envio", "esperar_listo", "push_kernel", "bajar_salida",
+              "version_dataset")
         viejo = (xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, xd.LOTES_LOCAL, xd.en_motor, os.environ.get("KAGGLE_CONFIG_DIR"),
                  {n: getattr(K, n) for n in ks})
-        estado, version, importados, bajados = {}, [0], [], []
+        estado, version, importados, bajados, pesos = {}, [0], [], [], []
         try:
             xd.RAIZ, xd.ENV, xd.TRABAJOS_DB = t, {"KAGGLE_USUARIO": "emi", "TRANSPORTE": "kaggle"}, db
             xd.LOTES_LOCAL = t / "motor" / "lotes"
             os.environ["KAGGLE_CONFIG_DIR"] = str(t / "cfg")
             K.estado_kernel = lambda k, **kw: (estado.get(k), "")
             K.estado_dataset = lambda ds, **kw: "ready"
-            K.subir_envio = lambda c, existe, n, **kw: (0, "")
+            K.subir_envio = lambda c, existe, n, **kw: (pesos.append(json.loads((Path(c) / "envio.json").read_text()).get("pesos")) or (0, ""))
             K.esperar_listo = lambda ds, **kw: 1.0
+            K.version_dataset = lambda ds, **kw: 1                                    # xd-pesos v1
             def push(c, limite_s=0, **kw):
                 version[0] += 1
                 return 0, f"Kernel version {version[0]} successfully pushed."
@@ -389,6 +391,9 @@ def test_daemon_ciclo_completo():
                 n = "lote_p3_x_t01" if k.endswith("/1") else "lote_p3_x_t02"
                 (Path(dest) / "lotes" / f"{n}_pred.json").write_text(json.dumps({"proyecto": 3, "predicciones": []}))
                 (Path(dest) / "lotes" / "cache" / f"{clave}.pt").write_bytes(b"pt")
+                ver = pesos[len(bajados) - 1] or {}                                   # el kernel verifico si se lo pidieron
+                (Path(dest) / "envio_resultado.json").write_text(json.dumps(
+                    {"pesos_verificados": ver.get("version") if ver.get("verificar_sha") else None}))
                 return 0, ""
             K.bajar_salida = bajar
             def en_motor(script, *args):
@@ -405,10 +410,12 @@ def test_daemon_ciclo_completo():
             assert "MODO REPORTE" in out and version[0] == 0 and "SOLO REPORTE" in out, out
             out = ciclo(True)                                                    # ciclo 1: sale el trozo 1
             assert version[0] == 1 and "trozo 1" in out and not bajados, out
+            assert pesos == [{"version": 1, "verificar_sha": True}] and xd._envio_en_curso()   # P.4.R4
             estado["emi/xd-worker/1"] = "complete"
             out = ciclo(True)                                                    # ciclo 2: trae, importa, trozo 2
             assert bajados == ["emi/xd-worker/1"] and importados == ["lote_p3_x_t01_pred.json"], out
             assert (t / "motor" / "cache_sam3" / f"{clave}.pt").exists() and version[0] == 2 and "trozo 2" in out, out
+            assert pesos[1] == {"version": 1, "verificar_sha": False}, pesos        # v1 ya verificada: solo tamano
             estado["emi/xd-worker/2"] = "running"
             out = ciclo(True)                                                    # ciclo 3: el 2 corre; nada que hacer
             assert version[0] == 2 and bajados == ["emi/xd-worker/1"] and "nada que traer" in out, out
@@ -417,6 +424,7 @@ def test_daemon_ciclo_completo():
             assert importados == ["lote_p3_x_t01_pred.json", "lote_p3_x_t02_pred.json"] and "Nada que enviar" in out, out
             with closing(C.abrir(db)) as con:
                 assert {x["estado"] for x in C.listar(con)} == {"importado"} and C.envios_pendientes(con, "kaggle") == []
+            assert not xd._envio_en_curso()
         finally:
             xd.RAIZ, xd.ENV, xd.TRABAJOS_DB, xd.LOTES_LOCAL, xd.en_motor, cfg, f = viejo
             for n, v in f.items():

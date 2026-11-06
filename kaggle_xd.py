@@ -150,7 +150,16 @@ def _enlazar(src, dst):
         shutil.copy2(src, dst)
 
 
-def armar_envio(zips, destino, usuario_, nombre, operador):
+def version_dataset(dataset, correr=subprocess.run):
+    """Numero de version actual de un dataset (status --format json), o None."""
+    rc, out = cli("datasets", "status", dataset, "--format", "json", correr=correr, timeout=120)
+    try:
+        return int(json.loads(out[out.index("{"):])["current_version_number"]) if rc == 0 else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def armar_envio(zips, destino, usuario_, nombre, operador, pesos=None):
     """zips: [(carpeta, Path)] -> carpeta con los zips + envio.json + dataset-metadata.json. -> envio (dict)."""
     destino = Path(destino)
     shutil.rmtree(destino, ignore_errors=True)
@@ -168,6 +177,8 @@ def armar_envio(zips, destino, usuario_, nombre, operador):
         raise ValueError("envio vacio")
     envio = {"esquema": 1, "envio": nombre, "operador": operador, "creado": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
              "trabajos": trabajos}
+    if pesos:                                     # P.4.R4: {"version": N, "verificar_sha": bool} de xd-pesos
+        envio["pesos"] = dict(pesos)
     (destino / "envio.json").write_text(json.dumps(envio, ensure_ascii=True, indent=1), encoding="utf-8")
     meta = metadata(usuario_, SLUG_ENVIOS, TITULO_ENVIOS)
     (destino / "dataset-metadata.json").write_text(json.dumps(meta, ensure_ascii=True, indent=1), encoding="utf-8")

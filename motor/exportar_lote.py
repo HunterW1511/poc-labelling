@@ -59,6 +59,8 @@ def main():
     ap.add_argument("--prioridad", default="", help="json con ids (o reporte de diagnostico.py)")
     ap.add_argument("--modo", choices=["auto", "sam3", "hijo"], default="auto")
     ap.add_argument("--hijo-conf", type=float, default=0.25, help="confianza minima del modelo hijo")
+    ap.add_argument("--grupo", default="", help="P.4.R4: nombre del grupo; con --sufijo tNN genera un solo zip <grupo>_tNN")
+    ap.add_argument("--sufijo", default="", help="P.4.R4: tNN (numero de trozo) para --grupo")
     ap.add_argument("--trozo", type=int, default=0, help="P.4: si >0 y hay mas tareas, genera 2 zips (t01 + t02)")
     ap.add_argument("--reporte", action="store_true", help="no crear el zip; solo listar")
     a = ap.parse_args()
@@ -112,7 +114,11 @@ def main():
     out.mkdir(exist_ok=True)
     base = f"lote_p{a.proyecto}_{ver}_{datetime.datetime.now():%Y%m%d-%H%M}"
     trozos = []
-    if a.trozo > 0 and len(tareas) > a.trozo:
+    if a.grupo:                                    # P.4.R4: el hub manda el trozo y su nombre (trozo 1 primero)
+        if not a.grupo.startswith(f"lote_p{a.proyecto}_") or len(a.sufijo) != 3 or not a.sufijo[1:].isdigit():
+            raise SystemExit(f"--grupo {a.grupo!r} --sufijo {a.sufijo!r}: se espera lote_p{a.proyecto}_... y tNN")
+        base, trozos = a.grupo, [(tareas, int(a.sufijo[1:]))]
+    elif a.trozo > 0 and len(tareas) > a.trozo:
         trozos = [(tareas[:a.trozo], 1), (tareas[a.trozo:], 2)]
         print(f"P.4: {len(tareas)} tareas en 2 trozos: {len(trozos[0][0])} + {len(trozos[1][0])}")
     else:

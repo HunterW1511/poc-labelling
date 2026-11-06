@@ -236,41 +236,46 @@ def test_tablero_en_modo_kaggle():
 
 
 def test_preetiquetar_precodifica_las_mismas_tareas():
-    """P.4.R1: el trozo 1 del lote y el de la precodificacion son las MISMAS tareas (si no, el clic liviano no responde)."""
+    """P.4.R1/R4: el trozo 1 del lote y el de la precodificacion son las MISMAS tareas; el trozo 1 se exporta (y con
+    --enviar sale a Kaggle) ANTES de exportar el resto."""
     with tempfile.TemporaryDirectory() as t:
         raiz, drive = _preparar(Path(t))
         xd.ENV = {"TRANSPORTE": "kaggle"}
-        llamadas = []
+        orden = []
+
+        def arg(args, k):
+            return args[args.index(k) + 1] if k in args else None
 
         def en_motor(script, *args):
-            llamadas.append((script, [str(x) for x in args]))
+            args = [str(x) for x in args]
             xd.LOTES_LOCAL.mkdir(parents=True, exist_ok=True)
-            if script == "exportar_lote.py":
-                salida = []
-                for num, ids in ((1, [7, 3, 9]), (2, [5, 1])):          # el orden de la muestra, no el de Label Studio
-                    zp = xd.LOTES_LOCAL / f"lote_p4_v_x_t{num:02d}.zip"
-                    with zipfile.ZipFile(zp, "w") as z:
-                        z.writestr("manifiesto.json", json.dumps({"grupo": "lote_p4_v_x", "tareas": [{"id": i} for i in ids]}))
-                    salida.append(f"OK -> /app/lotes/{zp.name}")
-                return 0, "\n".join(salida)
-            zp = xd.LOTES_LOCAL / "pre_p4_y_t01.zip"                        # exportar_pre.py
-            with zipfile.ZipFile(zp, "w") as z:
-                z.writestr("trabajo.json", json.dumps({"grupo": "pre_p4_y"}))
-            return 0, f"OK -> /app/lotes/{zp.name}"
+            if script == "exportar_lote.py" and "--reporte" in args:
+                orden.append(("muestra",))
+                return 0, "REPORTE 5 tareas | version v | ids 7,3,9,5,1"      # el orden de la muestra
+            nombre = f"{arg(args, '--grupo')}_{arg(args, '--sufijo')}.zip"
+            orden.append((script, arg(args, "--sufijo"), arg(args, "--tareas")))
+            with zipfile.ZipFile(xd.LOTES_LOCAL / nombre, "w") as z:
+                z.writestr("manifiesto.json" if script == "exportar_lote.py" else "trabajo.json",
+                           json.dumps({"grupo": arg(args, "--grupo")}))
+            return 0, f"OK -> /app/lotes/{nombre}"
+        enviados, original = [], xd.cmd_worker
         xd.en_motor = en_motor
-        a = NS(proyecto=4, muestra=5, semilla=0, minimo=1, prioridad="", modo="sam3", todas=False, trozo=3,
-               precodificar=True, aplicar=True)
-        rc, out = _correr(xd.cmd_preetiquetar, a)
-        assert rc == 0, out
-        pre = [args for s_, args in llamadas if s_ == "exportar_pre.py"]
-        assert len(pre) == 1 and "--tareas" in pre[0] and pre[0][pre[0].index("--tareas") + 1] == "7,3,9,5,1", pre
-        assert pre[0][pre[0].index("--trozo") + 1] == "3"
-        assert _uno("precodificacion", "pre_p4_y_t01.zip")["estado"] == "enviado"
-        assert _uno("preetiquetado", "lote_p4_v_x_t02.zip")["grupo"] == "lote_p4_v_x"
-        llamadas.clear()
-        rc, out = _correr(xd.cmd_preetiquetar, NS(**{**vars(a), "precodificar": False}))
-        assert not [x for x in llamadas if x[0] == "exportar_pre.py"]                 # --sin-precodificar
-
+        try:
+            xd.cmd_worker = lambda a: (orden.append(("ENVIAR",)) or enviados.append(a.aplicar) or 0)
+            a = NS(proyecto=4, muestra=5, semilla=0, minimo=1, prioridad="", modo="sam3", todas=False, trozo=3,
+                   precodificar=True, enviar=True, aplicar=True)
+            rc, out = _correr(xd.cmd_preetiquetar, a)
+            assert rc == 0, out
+            assert orden == [("muestra",), ("exportar_lote.py", "t01", "7,3,9"), ("exportar_pre.py", "t01", "7,3,9"),
+                             ("ENVIAR",), ("exportar_lote.py", "t02", "5,1"), ("exportar_pre.py", "t02", "5,1")], orden
+            assert enviados == [True]
+            g = _uno("preetiquetado", [f.name for f in xd.LOTES_LOCAL.glob("lote_p4_*_t02.zip")][0])["grupo"]
+            assert g.startswith("lote_p4_") and _uno("precodificacion", [f.name for f in xd.LOTES_LOCAL.glob("pre_p4_*_t01.zip")][0])
+            orden.clear()
+            rc, out = _correr(xd.cmd_preetiquetar, NS(**{**vars(a), "precodificar": False, "enviar": False}))
+            assert [x[0] for x in orden] == ["muestra", "exportar_lote.py", "exportar_lote.py"], orden   # sin cache ni envio
+        finally:
+            xd.cmd_worker = original
 
 def test_si_crea_el_proyecto_y_capturar_no_revienta():
     """P.5.R2: asistente-importar --aplicar --si crea el proyecto de verdad; capturar.py no usa input() sin consola."""

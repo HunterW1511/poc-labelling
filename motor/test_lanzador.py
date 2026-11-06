@@ -56,6 +56,15 @@ def test_buscar_y_verificar_pesos():
         (d / "pesos.json").write_text(json.dumps({"archivo": "sam3.pt", "bytes": 5, "sha256": L.sha256(d / "sam3.pt")}))
         assert L.buscar(t / "input", "pesos.json") == d / "pesos.json" and L.buscar(t, "no.json") is None
         assert L.verificar_pesos(d / "pesos.json") == d / "sam3.pt"
+        L.VERIFICADO.clear()
+        assert L.verificar_pesos(d / "pesos.json", completo=False) == d / "sam3.pt"        # P.4.R4: solo el tamano
+        assert L.VERIFICADO[str(d / "sam3.pt")] == L.sha256(d / "sam3.pt")
+        (d / "sam3.pt").write_bytes(b"pesos_de_otro_tamano")
+        try:
+            L.verificar_pesos(d / "pesos.json", completo=False)
+            raise AssertionError("debio rechazar otro tamano")
+        except RuntimeError as e:
+            assert "bytes" in str(e)
         (d / "sam3.pt").write_bytes(b"corrupto")
         try:
             L.verificar_pesos(d / "pesos.json")

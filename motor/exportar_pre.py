@@ -24,6 +24,8 @@ def main():
     ap.add_argument("proyecto", type=int)
     ap.add_argument("--todas", action="store_true", help="incluir fotos que ya tienen cache")
     ap.add_argument("--limite", type=int, default=0, help="maximo de fotos (0 = sin limite)")
+    ap.add_argument("--grupo", default="", help="P.4.R4: nombre del grupo; con --sufijo tNN genera un solo zip <grupo>_tNN")
+    ap.add_argument("--sufijo", default="", help="P.4.R4: tNN (numero de trozo) para --grupo")
     ap.add_argument("--trozo", type=int, default=0, help="P.4: si >0 y hay mas fotos, genera 2 zips (t01 + t02)")
     ap.add_argument("--tareas", default="", help="P.4.R1: solo estos ids, en este orden (los mismos trozos que el lote)")
     ap.add_argument("--reporte", action="store_true", help="no crear el zip; solo contar")
@@ -64,7 +66,11 @@ def main():
     LOTES.mkdir(exist_ok=True)
     base = f"pre_p{a.proyecto}_{datetime.datetime.now():%Y%m%d-%H%M%S}"
     trozos = []
-    if a.trozo > 0 and len(faltan) > a.trozo:
+    if a.grupo:                                    # P.4.R4: el hub manda el trozo y su nombre (trozo 1 primero)
+        if not a.grupo.startswith(f"pre_p{a.proyecto}_") or len(a.sufijo) != 3 or not a.sufijo[1:].isdigit():
+            raise SystemExit(f"--grupo {a.grupo!r} --sufijo {a.sufijo!r}: se espera pre_p{a.proyecto}_... y tNN")
+        base, trozos = a.grupo, [(faltan, int(a.sufijo[1:]))]
+    elif a.trozo > 0 and len(faltan) > a.trozo:
         trozos = [(faltan[:a.trozo], 1), (faltan[a.trozo:], 2)]
         print(f"P.4: {len(faltan)} fotos en 2 trozos: {len(trozos[0][0])} + {len(trozos[1][0])}")
     else:
