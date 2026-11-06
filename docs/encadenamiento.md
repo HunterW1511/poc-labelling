@@ -132,12 +132,15 @@ Si `S`: `python xd.py crear-proyecto SLUG --aplicar`.
 
 ## 7. Impacto en la UI
 
-La UI podria mostrar:
-- Estado del daemon (corriendo / detenido)
-- Ultimo chequeo (hace N minutos)
-- Proxima accion automatica prevista
-
-Esto queda para P.7 (UI dual). En P.5 el daemon es CLI puro.
+Hecho en P.7.3 (06/11/2026):
+- El daemon escribe `datos/daemon.json` (pid, ciclo, estado `ciclo`/`esperando`/`detenido`, siguiente ciclo) y un
+  latido cada 10 s desde un hilo. Sin latido en 45 s se lee como detenido (`sin_latido`): el proceso murio.
+- `xd.py daemon --estado` lo muestra; `xd.py daemon --parar` crea `datos/daemon.parar` y el daemon termina limpio al
+  acabar el paso en curso (nunca a media bajada). No arrancan dos daemons a la vez.
+- UI (Servicios -> Automatico): "Probar un ciclo" corre `daemon --una-vez` (reporte, en el trabajo unico); "Activar"
+  solo se habilita con ese reporte OK y lanza `daemon --aplicar --intervalo N` como proceso aparte (sigue aunque se
+  cierre la UI; salida en `datos/daemon.log`); "Detener" pide parar. Con el automatico activo la UI no aplica a mano
+  sus pasos (`worker`, `lote-importar`, `trabajos`) y oculta los botones de Kaggle.
 
 ## Revision P.5.R1 (Claude Code, 05/11/2026): lo que hace el codigo
 

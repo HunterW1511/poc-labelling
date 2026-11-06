@@ -75,7 +75,8 @@ Referencia de la spec: `motor/plantillas/LEEME_spec.md`.
   (un envio = una version del dataset privado `xd-envios` + el kernel privado `xd-worker`), consulta el kernel y trae
   la salida al espejo local (reconcilia la cola; lo que no vuelve queda en error para Reintentar).
 - `python xd.py daemon [--intervalo 5] [--una-vez] [--aplicar]`: cada N minutos estado -> traer sin la cache ->
-  importar predicciones -> siguiente trozo -> traer la cache -> importar la cache (P.4.R6). Sin `--aplicar` solo reporta. Diseno: [docs/encadenamiento.md](docs/encadenamiento.md).
+  importar predicciones -> siguiente trozo -> traer la cache -> importar la cache (P.4.R6). Sin `--aplicar` solo reporta. `--estado`: si corre (latido en `datos/daemon.json`); `--parar`: termina al acabar el
+  paso en curso. En la UI: Servicios -> Automatico (Probar un ciclo, Activar, Detener). Diseno: [docs/encadenamiento.md](docs/encadenamiento.md).
 - `python xd.py kaggle-pesos [--pesos RUTA] [--aplicar]`: sube `sam3.pt` + SAM License como dataset **privado**
   `<KAGGLE_USUARIO>/xd-pesos` (una cuenta por persona; token en `~/.kaggle/access_token`). El `--aplicar` lo corre la persona.
 - `python xd.py precodificar N [--todas] [--limite K] [--trozo 16] [--aplicar]`: fotos del proyecto sin cache de SAM 3 -> trabajo

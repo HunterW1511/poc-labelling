@@ -549,22 +549,68 @@ def test_daemon_ciclo_completo():
 def test_daemon_intervalo_desde_el_inicio_del_ciclo():
     """P.4.R5: con un envio corriendo, el siguiente ciclo empieza SONDEO_RAPIDO s despues del inicio del anterior."""
     reloj, esperas = [100.0], []
-    def sleep(s):
+    def esperar(s, est):
         esperas.append(s)
         raise KeyboardInterrupt                                                  # un ciclo y sale
     def ciclo(aplicar):
         reloj[0] += 6                                                            # el ciclo tarda 6 s (Kaggle)
-    viejo = (xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.time)
-    try:
-        xd.ciclo_daemon, xd._transporte = ciclo, lambda: NS(nombre="kaggle")
-        xd.time = NS(strftime=lambda *a: "t", monotonic=lambda: reloj[0], sleep=sleep)
-        for corriendo, espera in ((True, xd.SONDEO_RAPIDO - 6), (False, 60 - 6)):
-            xd._envio_en_curso = lambda: corriendo
+    viejo = (xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.time, xd._esperar, xd.TRABAJOS_DB)
+    with tempfile.TemporaryDirectory() as t:
+        try:
+            xd.ciclo_daemon, xd._transporte, xd._esperar = ciclo, lambda: NS(nombre="kaggle"), esperar
+            xd.TRABAJOS_DB = Path(t) / "trabajos.sqlite"                         # daemon.json va junto a la cola
+            xd.time = NS(strftime=lambda *a: "t", monotonic=lambda: reloj[0], time=lambda: reloj[0],
+                         localtime=lambda *a: None)
+            for corriendo, espera in ((True, xd.SONDEO_RAPIDO - 6), (False, 60 - 6)):
+                xd._envio_en_curso = lambda: corriendo
+                with redirect_stdout(io.StringIO()):
+                    assert xd.cmd_daemon(NS(intervalo=1, una_vez=False, aplicar=True)) == 0
+                assert esperas[-1] == espera, esperas
+        finally:
+            xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.time, xd._esperar, xd.TRABAJOS_DB = viejo
+
+
+def test_daemon_estado_y_parar():
+    """P.7.3: el daemon deja su estado en datos/daemon.json (latido), no arranca dos veces, --parar lo detiene limpio
+    al acabar la espera y, si el proceso muere, el latido viejo se lee como detenido."""
+    import threading
+    viejo = (xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.TRABAJOS_DB)
+    with tempfile.TemporaryDirectory() as t:
+        try:
+            xd.TRABAJOS_DB = Path(t) / "trabajos.sqlite"
+            ciclos = []
+            xd.ciclo_daemon, xd._transporte = (lambda aplicar: ciclos.append(aplicar)), (lambda: NS(nombre="kaggle"))
+            xd._envio_en_curso = lambda: False
+            out = io.StringIO()
+            with redirect_stdout(out):
+                assert xd.cmd_daemon(NS(estado=True, parar=False)) == 0
+                assert "nunca ha corrido" in out.getvalue()
+                assert xd.cmd_daemon(NS(estado=False, parar=True)) == 0          # nada que parar
+            h = threading.Thread(target=lambda: xd.cmd_daemon(NS(intervalo=60, una_vez=False, aplicar=True,
+                                                                  estado=False, parar=False)), daemon=True)
             with redirect_stdout(io.StringIO()):
-                assert xd.cmd_daemon(NS(intervalo=1, una_vez=False, aplicar=True)) == 0
-            assert esperas[-1] == espera, esperas
-    finally:
-        xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.time = viejo
+                h.start()
+                for _ in range(100):                                             # espera a que este esperando
+                    if xd.daemon_estado().get("estado") == "esperando":
+                        break
+                    xd.time.sleep(0.05)
+                e = xd.daemon_estado()
+                assert e["activo"] and e["ciclo"] == 1 and e["aplicar"] and e["proximo"], e
+                assert "Ya hay un daemon activo" in str(_falla(SystemExit, xd.cmd_daemon,
+                       NS(intervalo=1, una_vez=False, aplicar=True, estado=False, parar=False)))
+                assert xd.cmd_daemon(NS(estado=False, parar=True)) == 0
+                h.join(5)
+            assert not h.is_alive() and ciclos == [True], ciclos
+            e = xd.daemon_estado()
+            assert not e["activo"] and e["estado"] == "detenido" and e["motivo"] == "daemon --parar", e
+            assert not (Path(t) / "daemon.parar").exists()
+            f = Path(t) / "daemon.json"                                          # proceso muerto: latido viejo
+            d = json.loads(f.read_text(encoding="utf-8"))
+            f.write_text(json.dumps(dict(d, estado="esperando", latido=d["latido"] - 100)), encoding="utf-8")
+            e = xd.daemon_estado()
+            assert not e["activo"] and e["estado"] == "sin_latido", e
+        finally:
+            xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.TRABAJOS_DB = viejo
 
 
 if __name__ == "__main__":

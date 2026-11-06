@@ -66,6 +66,11 @@ a{color:var(--ac)}
 <button id="cancelar" disabled>Cancelar</button>
 </div>
 <p id="servicios">Cargando servicios...</p>
+<div class="fila"><span id="daemon" class="chico">Automatico: ...</span>
+<button class="mini" id="dprobar" title="daemon --una-vez: un ciclo en modo reporte (no escribe)">Probar un ciclo</button>
+<label class="chico" id="dintl">cada <input id="dint" type="number" min="1" max="60" value="1" style="width:4em"> min</label>
+<button class="mini pri" id="dactivar" disabled title="Se habilita cuando 'Probar un ciclo' termina OK">Activar</button>
+<button class="mini" id="ddetener" style="display:none">Detener</button></div>
 </section>
 <section class="card" id="externos">
 <div class="fila" style="justify-content:space-between"><h2>Pasos externos (<span id="ejecutor">colab</span>)</h2><div><span id="xkag" style="display:none"><button id="xenv">Enviar a Kaggle</button> <button id="xest">Estado de Kaggle</button> <button id="xtra">Traer de Kaggle</button> </span><button id="xrec" style="display:none">Reconciliar</button> <button id="xact">Actualizar</button></div></div>
@@ -110,7 +115,7 @@ a{color:var(--ac)}
 <script>
 const $ = s => document.querySelector(s);
 let timer = null, VISTO = 0, LS_URL = "http://127.0.0.1:8080";
-let ACC = {}, ULTIMO = [], TARJ = {}, ABIERTA = null, PENDIENTE = null;
+let ACC = {}, ULTIMO = [], TARJ = {}, ABIERTA = null, PENDIENTE = null, DAEMON = {}, TRAB = {};
 let REC = null, BLOB = null, EXT = "", T0 = 0, TREC = null, APOLL = null, ADET = null;
 const DEFECTOS = {"preetiquetar": {"--muestra": "30", "--modo": "auto"}, "registrar": {"--run": "ultimo", "--activar": true},
   "dataset": {"--formato": "det", "--drive": true}, "lote-importar": {"--fijar-version": true}};
@@ -156,8 +161,22 @@ function pintar(t) {
   if (!t.id) { e.textContent = "Sin trabajos."; e.className = ""; }
   else if (t.corriendo) { e.textContent = "Corriendo: " + t.cmd + " (" + t.seg + " s)"; e.className = ""; }
   else { e.textContent = (t.rc === 0 ? "Termino OK" : "Termino con codigo " + t.rc) + ": " + t.cmd + " (" + t.seg + " s)"; e.className = t.rc === 0 ? "ok" : "err"; }
-  document.querySelectorAll("button[data-cmd], #proyectos button, #confsi, #aenviar, #ares button, #xlista button").forEach(b => b.disabled = !!t.corriendo);
+  document.querySelectorAll("button[data-cmd], #proyectos button, #confsi, #aenviar, #ares button, #xlista button, #dprobar").forEach(b => b.disabled = !!t.corriendo);
   $("#cancelar").disabled = !t.corriendo;
+  TRAB = t; pintarDaemon();
+}
+// P.7.3: el automatico (daemon) corre aparte; la UI lo muestra, lo prueba (reporte), lo activa y lo detiene
+function pintarDaemon() {
+  const d = DAEMON || {}, act = !!d.activo;
+  const txt = act ? "Automatico: <b>ACTIVO</b> | ciclo " + d.ciclo + " | " +
+      (d.estado === "ciclo" ? "trabajando" : "siguiente ciclo " + esc(d.proximo || "-")) + " | latido hace " + d.latido_hace + " s"
+    : "Automatico: <b>detenido</b>" + (d.estado === "sin_latido" ? " (se cerro sin avisar)" : d.motivo ? " (" + esc(d.motivo) + ")" : "") +
+      ". Trae, importa y envia solo los pasos de Kaggle.";
+  $("#daemon").innerHTML = txt;
+  ["#dprobar", "#dintl", "#dactivar"].forEach(s => $(s).style.display = act ? "none" : "");
+  $("#ddetener").style.display = act ? "" : "none";
+  $("#dactivar").disabled = act || TRAB.corriendo || !(TRAB.cmd === "xd.py daemon --una-vez" && TRAB.rc === 0);
+  if ($("#xkag")) $("#xkag").style.visibility = act ? "hidden" : "visible";
 }
 function mostrarConfirmar(t) {
   if (t.rc === 0) {
@@ -201,6 +220,7 @@ async function cargarServicios() {
   try {
     const s = await api("/api/servicios"), e = s.estado || {};
     LS_URL = s.ls_url || LS_URL;
+    DAEMON = s.daemon || {}; pintarDaemon();
     const up = e.uptime_s ? (e.uptime_s / 3600).toFixed(1) + " h" : "-";
     $("#servicios").innerHTML = "Label Studio: <b>" + (s.label_studio ? "UP" : "NO RESPONDE") + "</b> | Motor: <b>" +
       (s.motor ? "UP" : "NO RESPONDE") + "</b> | SAM 3 listo: <b>" + (e.listo ? "si" : "no") + "</b> | motor encendido: " + up +
@@ -457,6 +477,19 @@ $("#aplantilla").onclick = () => {
   correrAccion({accion: "spec-nueva", slug: slug, n: null, opciones: {"--titulo": titulo}}, false);
 };
 $("#confsi").onclick = () => { if (PENDIENTE) correrAccion(PENDIENTE, true); };
+$("#dprobar").onclick = () => correrAccion({accion: "daemon", slug: null, n: null, opciones: {"--una-vez": true}}, false);
+$("#dactivar").onclick = async () => {
+  const iv = parseInt($("#dint").value, 10);
+  if (!confirm("Activar el automatico cada " + iv + " min? Trae, importa y envia a Kaggle sin preguntar (sigue aunque cierres la UI).")) return;
+  try { DAEMON = await api("/api/daemon", {op: "iniciar", intervalo: iv}); } catch (e) { alert(e.message); }
+  pintarDaemon(); cargarExternos();
+};
+$("#ddetener").onclick = async () => {
+  try { DAEMON = await api("/api/daemon", {op: "parar"}); } catch (e) { alert(e.message); }
+  alert("Pedido enviado: el automatico termina al acabar el paso en curso (una bajada larga puede tardar minutos).");
+  cargarServicios();
+};
+setInterval(cargarServicios, 15000);
 $("#confno").onclick = () => { PENDIENTE = null; ocultarConfirmar(); };
 $("#cancelar").onclick = async () => { await api("/api/cancelar", {}); sondear(); };
 $("#actualizar").onclick = cargarProyectos;

@@ -15,6 +15,9 @@ AUDIOS, TEXTOS = RAIZ / "ui" / "audios", RAIZ / "ui" / "textos"   # datos person
 HOST, PUERTO = "127.0.0.1", 8090
 MAX_AUDIO = 60 * 1024 * 1024
 PERMITIDOS = {"estado", "precalentar", "reiniciar-motor"}      # servicios (E.1)
+DAEMON_LOG = RAIZ / "datos" / "daemon.log"
+# P.7.3: con el automatico (daemon) activo, la UI no aplica a mano lo que el hace (dos procesos sobre la misma cola)
+DEL_DAEMON = {"worker", "lote-importar", "trabajos"}
 SCRIPTS = {"xd.py", "capturar.py"}
 ARG = re.compile(r"^[A-Za-z0-9_.,:@=/\\ -]{0,200}$")
 VALOR = re.compile(r"^[A-Za-z0-9_.,:@=/-]{1,200}$")
@@ -50,6 +53,8 @@ ACCIONES = {
                "opciones": {"--enviar": "flag", "--estado": "flag", "--traer": "flag"}},
     "trabajos": {"id": None, "aplicar": True, "titulo": "Cola de trabajos",
                  "opciones": {"--reconciliar": "flag", "--reintentar": "int"}},
+    # P.7.3: solo el reporte de un ciclo; activarlo con --aplicar va por /api/daemon (proceso aparte, no el trabajo unico)
+    "daemon": {"id": None, "titulo": "Automatico: probar un ciclo", "opciones": {"--una-vez": "flag"}},
 }
 ESCRIBEN_SIN_APLICAR = {"sincronizar", "lote-importar"}        # escriben en Label Studio sin modo reporte
 
@@ -115,6 +120,38 @@ class Trabajo:
 T = Trabajo()
 
 
+def daemon(d):
+    """P.7.3: inicia (proceso aparte, sigue aunque se cierre la UI) o pide parar el automatico. -> estado."""
+    op = d.get("op")
+    xd = tablero.xd
+    if op == "parar":
+        if xd.daemon_estado()["activo"]:
+            xd._daemon_rutas()[1].write_text(time.strftime("%Y-%m-%dT%H:%M:%S"), encoding="utf-8")
+        return xd.daemon_estado()
+    if op != "iniciar":
+        raise ValueError(f"op invalida: {op!r} (iniciar o parar)")
+    iv = d.get("intervalo", 5)
+    if isinstance(iv, bool) or not isinstance(iv, int) or not 1 <= iv <= 60:
+        raise ValueError("intervalo: minutos entre 1 y 60")
+    if xd.daemon_estado()["activo"]:
+        raise RuntimeError("el automatico ya esta activo")
+    if not T.fue_ok("daemon", ["--una-vez"]):
+        raise PermissionError("primero corre 'Probar un ciclo' (reporte) y que termine OK")
+    DAEMON_LOG.parent.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+    flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0
+    with open(DAEMON_LOG, "ab") as log:
+        subprocess.Popen([sys.executable, "-u", str(RAIZ / "xd.py"), "daemon", "--aplicar", "--intervalo", str(iv)],
+                         cwd=RAIZ, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env,
+                         creationflags=flags, start_new_session=os.name != "nt")
+    for _ in range(50):                                 # hasta que escriba su estado (ciclo 1)
+        e = xd.daemon_estado()
+        if e["activo"]:
+            return e
+        time.sleep(0.1)
+    return xd.daemon_estado()
+
+
 def armar(d):
     """Valida una accion -> (comando, args, script). ValueError o PermissionError si no procede."""
     nombre = d.get("accion")
@@ -162,6 +199,8 @@ def armar(d):
             raise ValueError(f"{k}: texto de una linea, sin comillas, hasta 120 caracteres")
         args += [k, v]
     aplicar = bool(d.get("aplicar"))
+    if nombre in DEL_DAEMON and (aplicar or nombre in ESCRIBEN_SIN_APLICAR) and tablero.xd.daemon_estado()["activo"]:
+        raise PermissionError("el automatico (daemon) esta activo y ya hace este paso: detenlo antes de hacerlo a mano")
     if aplicar and not a.get("aplicar"):
         raise ValueError(f"{nombre} no tiene modo --aplicar")
     if (aplicar or nombre in ESCRIBEN_SIN_APLICAR) and n in tablero.PROTEGIDOS:
@@ -319,6 +358,8 @@ class Manejador(BaseHTTPRequestHandler):
                 return self._json(200, {"id": T.lanzar(cmd, args, script)})
             if self.path == "/api/asistente":
                 return self._json(200, {"id": T.lanzar("asistente", armar_asistente(d))})
+            if self.path == "/api/daemon":
+                return self._json(200, daemon(d))
             if self.path == "/api/cancelar":
                 T.cancelar()
                 return self._json(200, T.estado())

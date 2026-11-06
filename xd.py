@@ -2,7 +2,7 @@
 """CLI del sistema de pre-etiquetado (A.5). Solo biblioteca estandar: corre con cualquier Python >= 3.10
 en Windows, Mac o Linux, sin venv. Lee la configuracion del .env de esta carpeta.
 Uso: python xd.py <comando> [opciones]    (python xd.py -h)"""
-import argparse, json, os, re, shutil, subprocess, sys, time, urllib.request
+import argparse, json, os, re, shutil, subprocess, sys, threading, time, urllib.request
 from types import SimpleNamespace as NS_
 from pathlib import Path, PurePosixPath
 
@@ -412,7 +412,7 @@ def cmd_dataset(a):
 
 
 TESTS_HOST = ("plan", "muestra", "correccion", "registro", "aceptacion", "esquema_llm", "asistente", "buzon", "comparar",
-              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador", "cache_sam3", "guia")
+              "plantilla", "notebooks", "ver", "cola_trabajos", "xd_trabajos", "worker", "transporte", "kaggle", "lanzador", "cache_sam3", "guia", "ui")
 TESTS_MOTOR = ("generar", "spec", "hijo", "reglas", "concurrencia", "cache_clic", "precalentar", "importar_lote")      # necesitan el contenedor (torch, rutas /app)
 
 
@@ -1514,16 +1514,118 @@ def _envio_en_curso():
         return False
 
 
+# P.7.3: el daemon deja su estado junto a la cola (datos/daemon.json) para que la UI lo muestre, y se detiene limpio
+# al crear datos/daemon.parar (al terminar el paso en curso; nunca a media bajada). Latido cada 10 s desde un hilo:
+# si el proceso muere, el latido envejece y el estado se lee como detenido.
+LATIDO_S, LATIDO_MAX_S = 10, 45
+
+
+def _daemon_rutas():
+    d = Path(TRABAJOS_DB).parent
+    return d / "daemon.json", d / "daemon.parar"
+
+
+def daemon_estado(ahora=None):
+    """Estado del daemon (solo lee): {"activo": bool, "estado", "pid", "ciclo", "proximo", "latido_hace", ...}."""
+    f, _ = _daemon_rutas()
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"activo": False, "estado": "nunca", "latido_hace": None}
+    ahora = time.time() if ahora is None else ahora
+    hace = round(ahora - d.get("latido", 0))
+    d["latido_hace"] = hace
+    d["activo"] = d.get("estado") in ("ciclo", "esperando") and hace <= LATIDO_MAX_S
+    if d.get("estado") in ("ciclo", "esperando") and not d["activo"]:
+        d["estado"] = "sin_latido"                    # el proceso murio sin escribir 'detenido'
+    return d
+
+
+class _EstadoDaemon:
+    """Escribe datos/daemon.json (atomico) y mantiene el latido mientras el daemon vive."""
+    def __init__(self, a):
+        self.f, self.parar = _daemon_rutas()
+        self.lock, self.fin = threading.Lock(), threading.Event()
+        self.d = {"pid": os.getpid(), "inicio": time.strftime("%Y-%m-%dT%H:%M:%S"), "aplicar": bool(a.aplicar),
+                  "intervalo": a.intervalo, "estado": "ciclo", "ciclo": 0, "proximo": None}
+
+    def poner(self, **kw):
+        with self.lock:
+            self.d.update(kw, latido=time.time())
+            self.f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.f.with_name(self.f.name + ".tmp")
+            tmp.write_text(json.dumps(self.d, ensure_ascii=True), encoding="utf-8")
+            tmp.replace(self.f)
+
+    def _latir(self):
+        while not self.fin.wait(LATIDO_S):
+            try:
+                self.poner()
+            except OSError:
+                pass
+
+    def empezar(self):
+        self.parar.unlink(missing_ok=True)
+        self.poner()
+        threading.Thread(target=self._latir, daemon=True, name="daemon-latido").start()
+
+    def pidio_parar(self):
+        return self.parar.exists()
+
+    def terminar(self, motivo):
+        self.fin.set()
+        self.parar.unlink(missing_ok=True)
+        self.poner(estado="detenido", motivo=motivo, proximo=None)
+
+
+def _esperar(segundos, est):
+    """Duerme hasta el siguiente ciclo; -> True si pidieron parar (revisa datos/daemon.parar cada segundo)."""
+    fin = time.monotonic() + segundos
+    while (r := fin - time.monotonic()) > 0:
+        if est.pidio_parar():
+            return True
+        time.sleep(min(1.0, r))
+    return est.pidio_parar()
+
+
 def cmd_daemon(a):
     """P.5.R1: encadena los pasos externos cada N minutos: estado -> traer (sin la cache) -> importar predicciones ->
     enviar el siguiente trozo -> traer la cache -> importar la cache (P.4.R6). Sin --aplicar solo reporta.
-    Ctrl+C lo detiene."""
+    Ctrl+C o  daemon --parar  lo detienen (P.7.3); --estado muestra si corre."""
+    if getattr(a, "estado", False):
+        e = daemon_estado()
+        if e["estado"] == "nunca":
+            print("daemon: nunca ha corrido aqui")
+            return 0
+        print(f"daemon: {'ACTIVO' if e['activo'] else 'detenido'} ({e['estado']}) | pid {e.get('pid')} | "
+              f"ciclo {e.get('ciclo')} | {'aplica' if e.get('aplicar') else 'solo reporta'} | "
+              f"latido hace {e['latido_hace']} s" + (f" | siguiente ciclo {e['proximo']}" if e.get("proximo") else "")
+              + (f" | {e['motivo']}" if e.get("motivo") and not e["activo"] else ""))
+        return 0
+    if getattr(a, "parar", False):
+        e = daemon_estado()
+        if not e["activo"]:
+            print("daemon: no hay ninguno activo")
+            return 0
+        _daemon_rutas()[1].write_text(time.strftime("%Y-%m-%dT%H:%M:%S"), encoding="utf-8")
+        print(f"daemon: pedido de parar enviado al pid {e.get('pid')}; termina al acabar el paso en curso")
+        return 0
     if not a.aplicar:
         print("daemon en MODO REPORTE: no escribe nada (agrega --aplicar para que traiga, importe y envie)")
-    n = 0
+    est = None
+    if not a.una_vez:
+        e = daemon_estado()
+        if e["activo"]:
+            raise SystemExit(f"Ya hay un daemon activo (pid {e.get('pid')}, latido hace {e['latido_hace']} s): "
+                             "python xd.py daemon --parar")
+        est = _EstadoDaemon(a)
+        est.empezar()
+    n, motivo = 0, "Ctrl+C"
     try:
         while True:
             n += 1
+            if est:
+                est.poner(estado="ciclo", ciclo=n, ciclo_inicio=time.strftime("%Y-%m-%dT%H:%M:%S"), proximo=None)
             print(f"\n=== ciclo {n} | {time.strftime('%Y-%m-%d %H:%M:%S')} | transporte {_transporte().nombre}")
             t0 = time.monotonic()
             ciclo_daemon(a.aplicar)
@@ -1534,10 +1636,18 @@ def cmd_daemon(a):
             espera = max(0, round((SONDEO_RAPIDO if rapido else max(1, a.intervalo) * 60) - (time.monotonic() - t0)))
             print(f"daemon: siguiente ciclo en {espera // 60} min {espera % 60} s"
                   + (" (hay un envio corriendo: sondeo rapido)" if rapido else "") + " (Ctrl+C para detener)")
-            time.sleep(espera)
+            est.poner(estado="esperando", ciclo_fin=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                      proximo=time.strftime("%H:%M:%S", time.localtime(time.time() + espera)))
+            if est.pidio_parar() or _esperar(espera, est):
+                motivo = "daemon --parar"
+                print("\ndaemon: detenido (daemon --parar)")
+                return 0
     except KeyboardInterrupt:
         print("\ndaemon: detenido")
         return 0
+    finally:
+        if est:
+            est.terminar(motivo)
 
 
 def main():
@@ -1735,6 +1845,8 @@ def main():
     p.add_argument("--intervalo", type=int, default=5, help="minutos entre ciclos (defecto 5)")
     p.add_argument("--una-vez", "--solo-una-vez", dest="una_vez", action="store_true", help="un solo ciclo y sale")
     p.add_argument("--aplicar", action="store_true", help="sin esto solo reporta (no trae, no importa, no envia)")
+    p.add_argument("--estado", action="store_true", help="P.7: si hay un daemon activo, su ciclo y su latido")
+    p.add_argument("--parar", action="store_true", help="P.7: pide al daemon activo que termine al acabar su paso")
     p.set_defaults(f=cmd_daemon)
 
     a = ap.parse_args()

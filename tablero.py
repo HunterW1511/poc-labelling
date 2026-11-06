@@ -38,7 +38,8 @@ def _ls(ruta):
 def servicios():
     ls = xd.intentar(xd.http, "GET", xd.LS + "/health", timeout=5)
     mh = xd.intentar(xd.http, "GET", xd.MOTOR + "/health", timeout=5)
-    return {"label_studio": bool(ls), "motor": bool(mh), "estado": xd._estado() if mh else None, "ls_url": xd.LS}
+    return {"label_studio": bool(ls), "motor": bool(mh), "estado": xd._estado() if mh else None, "ls_url": xd.LS,
+            "daemon": xd.daemon_estado()}
 
 
 def _drive():
