@@ -168,6 +168,10 @@ def _datos(t, n, det, lotes, v):
     t["modelos"], _ = _modelos(n)
     t["runs_sin_registrar"] = _runs(v, n)
     t["datasets"] = sorted(f.name for f in DATASETS.glob(f"dataset_p{n}_*.zip"))[-3:] if DATASETS.is_dir() else []
+    t["en_espera"] = {}                               # P.7.4: trabajos del proyecto aun en el worker, por tipo
+    for x in v["trabajos"]:
+        if x.get("proyecto") == n and x.get("estado") in ESPERA:
+            t["en_espera"][x["tipo"]] = t["en_espera"].get(x["tipo"], 0) + 1
 
 
 def siguiente(t):
@@ -378,7 +382,7 @@ def proyectos():
     for slug in sorted(slugs):
         ruta = PROYECTOS / slug / "spec.json"
         spec, reg = _json(ruta), _json(PROYECTOS / slug / "proyecto.json")
-        titulo = ((spec or {}).get("proyecto") or {}).get("titulo")
+        titulo = ((spec or {}).get("proyecto") or {}).get("titulo") or xd.titulo_caso(slug)
         n, vinculo = (reg or {}).get("proyecto"), "proyecto.json"
         if not n:
             n, vinculo = (por_titulo.get(titulo) if titulo else None), "titulo"

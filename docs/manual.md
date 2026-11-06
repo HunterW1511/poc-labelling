@@ -27,15 +27,18 @@ Lo dice `TRANSPORTE` en tu `.env` (instalacion en README.md):
 En los pasos de abajo, "el worker" es cualquiera de los dos.
 
 ### Modo guiado y automatico (P.7)
-- **Guiado** (boton arriba a la derecha; la UI lo recuerda): la tarjeta **Tus casos** muestra cada proyecto con sus
-  9 pasos (Caso, Proyecto, Fotos, Pre-etiquetado, Revision, Modelo, Mas tareas, Validacion, En vivo), el paso actual
-  y **un solo boton** para hacerlo. Lo que escribe primero muestra el reporte en **Salida** y pide confirmar. Para un
-  caso nuevo escribe un nombre corto y pulsa **Describirlo** (asistente) o **Usar plantilla**. Es lo mismo que
-  `python xd.py guia`.
+- **Guiado** (boton arriba a la derecha; la UI lo recuerda). A la izquierda tus proyectos y **+ Nuevo proyecto**; a la
+  derecha los 10 pasos del proyecto elegido y, abajo, la **consola**. Cada paso dice que hacer y tiene un solo boton:
+  1. Crear proyecto (su nombre) -> 2. Describir el caso (grabar o escribir; el asistente lo convierte en etiquetas y
+  carpetas, tu lo revisas y aplicas, y se crea en Label Studio) -> 3. Fotos (camara o copiar a la carpeta y subir) ->
+  4. Pre-etiquetar con SAM 3 -> 5. Verificar en Label Studio -> 6. Modelo hijo -> 7. Pre-etiquetar el resto con el hijo
+  -> 8. Verificar final -> 9. Modelo final -> 10. Probar en vivo.
+  Lo que escribe corre primero un reporte (en la consola) y pide **Confirmar** en el mismo paso. Los pasos ya hechos
+  se pueden abrir (por ejemplo, Fotos para tomar mas). Es lo mismo que `python xd.py guia`.
+- **Automatico** (arriba a la derecha): **Encender** prueba un ciclo y pide confirmar; despues envia, trae e importa lo
+  de Kaggle sin que pulses nada, aunque cierres la UI (`python xd.py daemon --aplicar`). **Apagar** lo para al
+  terminar el paso en curso. Mientras esta encendido, la UI no deja hacer a mano esos pasos.
 - **Avanzado**: todas las acciones, los pasos externos y el asistente completo (como antes).
-- **Automatico** (tarjeta Servicios): **Probar un ciclo** (reporte, no escribe) y luego **Activar** cada N minutos:
-  envia, trae e importa lo de Kaggle sin que pulses nada, aunque cierres la UI (`python xd.py daemon --aplicar`).
-  **Detener** lo para al terminar el paso en curso. Mientras esta activo, la UI no deja hacer a mano esos pasos.
 
 ## 2. Un proyecto de principio a fin
 

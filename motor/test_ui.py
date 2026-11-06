@@ -46,6 +46,37 @@ def test_daemon_desde_la_ui():
             xd.TRABAJOS_DB = viejo
 
 
+
+def test_caso_nuevo_y_su_titulo():
+    """P.7.4: caso-nuevo crea motor/proyectos/<slug>/caso.json (reporte primero, no pisa uno existente) y su titulo
+    manda en spec-nueva (y en asistente-importar)."""
+    import io
+    from contextlib import redirect_stdout
+    from types import SimpleNamespace as NS
+    viejo = xd.RAIZ
+    with tempfile.TemporaryDirectory() as t:
+        try:
+            xd.RAIZ = Path(t)
+            d = Path(t) / "motor" / "proyectos" / "tornillos"
+            with redirect_stdout(io.StringIO()) as out:
+                assert xd.cmd_caso_nuevo(NS(slug="tornillos", titulo="Conteo de tornillos", aplicar=False)) == 0
+            assert "SOLO REPORTE" in out.getvalue() and not d.exists()
+            assert "Falta --titulo" in _falla(SystemExit, xd.cmd_caso_nuevo, NS(slug="tornillos", titulo=" ", aplicar=True))
+            with redirect_stdout(io.StringIO()):
+                assert xd.cmd_caso_nuevo(NS(slug="tornillos", titulo="Conteo de tornillos", aplicar=True)) == 0
+            assert json.loads((d / "caso.json").read_text(encoding="utf-8"))["titulo"] == "Conteo de tornillos"
+            assert xd.titulo_caso("tornillos") == "Conteo de tornillos" and xd.titulo_caso("otro") is None
+            assert "Ya existe" in _falla(SystemExit, xd.cmd_caso_nuevo, NS(slug="tornillos", titulo="X", aplicar=True))
+            with redirect_stdout(io.StringIO()):
+                xd.cmd_spec_nueva(NS(slug="tornillos", titulo="", aplicar=True))
+            spec = json.loads((d / "spec.json").read_text(encoding="utf-8"))
+            assert spec["proyecto"]["titulo"] == "Conteo de tornillos", spec["proyecto"]
+            assert ui.armar({"accion": "caso-nuevo", "slug": "x", "opciones": {"--titulo": "Mi caso"}})[1] == ["x", "--titulo", "Mi caso"]
+        finally:
+            xd.RAIZ = viejo
+
+
 if __name__ == "__main__":
+    test_caso_nuevo_y_su_titulo()
     test_daemon_desde_la_ui()
     print("TEST UI OK: daemon desde la UI con reporte previo; sus pasos no se aplican a mano mientras corre")

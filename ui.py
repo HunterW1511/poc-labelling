@@ -28,6 +28,7 @@ TEXTO = re.compile(r"^[^\x00-\x1f\"]{1,120}$")               # titulos: admite e
 # id = "slug" | "n" | "archivo" | None; aplicar = tiene modo reporte (se confirma con --aplicar);
 # script = otro programa del host (por defecto xd.py); ventana = abre una ventana de OpenCV en el escritorio
 ACCIONES = {
+    "caso-nuevo": {"id": "slug", "aplicar": True, "titulo": "Crear proyecto", "opciones": {"--titulo": "texto"}},
     "spec-nueva": {"id": "slug", "aplicar": True, "titulo": "Spec desde plantilla", "opciones": {"--titulo": "texto"}},
     "validar": {"id": "slug", "titulo": "Validar spec"},
     "crear-proyecto": {"id": "slug", "aplicar": True, "titulo": "Crear proyecto"},
@@ -308,6 +309,8 @@ class Manejador(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             return self._enviar(200, HTML.read_bytes(), "text/html; charset=utf-8")
+        if self.path == "/guiado.js":                  # P.7.4: vista guiada (archivo fijo, no se arma con la ruta)
+            return self._enviar(200, (RAIZ / "ui" / "guiado.js").read_bytes(), "text/javascript; charset=utf-8")
         if not self.path.startswith("/api/"):
             return self._json(404, {"error": "no existe"})
         if not self._api_ok():

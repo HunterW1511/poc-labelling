@@ -566,6 +566,38 @@ def cmd_validar(a):
     return 1 if e else 0
 
 
+def titulo_caso(slug):
+    """P.7.4: titulo de motor/proyectos/<slug>/caso.json (lo crea caso-nuevo), o None."""
+    try:
+        return (json.loads((RAIZ / "motor" / "proyectos" / slug / "caso.json").read_text(encoding="utf-8"))
+                .get("titulo") or None)
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def cmd_caso_nuevo(a):
+    """P.7.4: primer paso del modo guiado. Crea motor/proyectos/<slug>/ con caso.json (nombre del caso), sin spec:
+    luego se describe con el asistente (sin spec previa) o con la plantilla. Reporte primero."""
+    if not SLUG_RE.match(a.slug):
+        raise SystemExit(f"slug={a.slug!r}: solo minusculas, digitos, _ o -")
+    titulo = (a.titulo or "").strip()
+    if not titulo:
+        raise SystemExit("Falta --titulo (el nombre del proyecto, como lo veras en Label Studio)")
+    d = RAIZ / "motor" / "proyectos" / a.slug
+    if d.exists():
+        raise SystemExit(f"Ya existe el caso {a.slug} ({d}); elige otro nombre")
+    print(f"caso {a.slug!r} | titulo {titulo!r} -> {d / 'caso.json'}")
+    if not a.aplicar:
+        print("SOLO REPORTE: usa --aplicar para crearlo")
+        return 0
+    d.mkdir(parents=True)
+    (d / "caso.json").write_text(json.dumps({"titulo": titulo, "creado": time.strftime("%Y-%m-%dT%H:%M:%S")},
+                                            ensure_ascii=True) + "\n", encoding="utf-8")
+    print(f"OK caso {a.slug}. Siguiente: describelo (python xd.py asistente {a.slug} --texto ...) o usa la plantilla "
+          f"(python xd.py spec-nueva {a.slug} --aplicar)")
+    return 0
+
+
 def cmd_spec_nueva(a):
     if not SLUG_RE.match(a.slug):
         raise SystemExit(f"slug={a.slug!r}: solo minusculas, digitos, _ o -")
@@ -574,8 +606,9 @@ def cmd_spec_nueva(a):
         raise SystemExit(f"Ya existe {ruta}: editala o borrala; spec-nueva no sobrescribe")
     s = json.loads(PLANTILLA.read_text(encoding="utf-8"))
     s["proyecto"]["slug"] = a.slug
-    if a.titulo:
-        s["proyecto"]["titulo"] = a.titulo.strip()
+    titulo = (a.titulo or "").strip() or titulo_caso(a.slug)
+    if titulo:
+        s["proyecto"]["titulo"] = titulo
     s["imagenes"] = {"raiz": f"mis_imagenes/{a.slug}"}
     e, av = _validar_spec(s, a.slug)
     print(f"spec {'CREADA' if a.aplicar else 'CREARIA'} {ruta} desde {PLANTILLA.name}")
@@ -1172,6 +1205,10 @@ def cmd_asistente_importar(a):
     print(f"\nPlan de captura (sin --total):")
     for fl in plan_captura(s):
         print(f"  {fl['carpeta']:<16}{fl['tipo']:<10}{fl['fotos']:>5}  {fl['motivo']}")
+    titulo = titulo_caso(slug)                       # P.7.4: el nombre que puso la persona manda sobre el del LLM
+    if titulo and (s.get("proyecto") or {}).get("titulo") != titulo:
+        s.setdefault("proyecto", {})["titulo"] = titulo
+        print(f"Titulo del caso (caso.json): {titulo!r}")
     ruta = RAIZ / "motor" / "proyectos" / slug / "spec.json"
     if not a.aplicar:
         print(f"SOLO REPORTE: usa --aplicar para escribir {ruta}")
@@ -1737,6 +1774,11 @@ def main():
     p.add_argument("--aplicar", action="store_true")
     p.set_defaults(f=cmd_cuadernos)
 
+    p = sub.add_parser("caso-nuevo", help="P.7: crea un caso vacio (nombre y titulo) para describirlo despues")
+    p.add_argument("slug")
+    p.add_argument("--titulo", default="")
+    p.add_argument("--aplicar", action="store_true")
+    p.set_defaults(f=cmd_caso_nuevo)
     p = sub.add_parser("spec-nueva", help="spec desde la plantilla (camino sin asistente); reporte o --aplicar")
     p.add_argument("slug")
     p.add_argument("--titulo", default="")
