@@ -435,6 +435,27 @@ def test_daemon_ciclo_completo():
                 os.environ["KAGGLE_CONFIG_DIR"] = cfg
 
 
+def test_daemon_intervalo_desde_el_inicio_del_ciclo():
+    """P.4.R5: con un envio corriendo, el siguiente ciclo empieza SONDEO_RAPIDO s despues del inicio del anterior."""
+    reloj, esperas = [100.0], []
+    def sleep(s):
+        esperas.append(s)
+        raise KeyboardInterrupt                                                  # un ciclo y sale
+    def ciclo(aplicar):
+        reloj[0] += 6                                                            # el ciclo tarda 6 s (Kaggle)
+    viejo = (xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.time)
+    try:
+        xd.ciclo_daemon, xd._transporte = ciclo, lambda: NS(nombre="kaggle")
+        xd.time = NS(strftime=lambda *a: "t", monotonic=lambda: reloj[0], sleep=sleep)
+        for corriendo, espera in ((True, xd.SONDEO_RAPIDO - 6), (False, 60 - 6)):
+            xd._envio_en_curso = lambda: corriendo
+            with redirect_stdout(io.StringIO()):
+                assert xd.cmd_daemon(NS(intervalo=1, una_vez=False, aplicar=True)) == 0
+            assert esperas[-1] == espera, esperas
+    finally:
+        xd.ciclo_daemon, xd._envio_en_curso, xd._transporte, xd.time = viejo
+
+
 if __name__ == "__main__":
     for n, f in sorted(globals().items()):
         if n.startswith("test_"):

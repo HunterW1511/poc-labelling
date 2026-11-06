@@ -3,7 +3,7 @@ la logica de cada trabajo esta en el worker.py que trae su zip. Lee envio.json y
 datasets xd-envios y xd-pesos), verifica el sha256 de sam3.pt, instala las versiones fijas que hagan falta, procesa
 los trabajos agrupados por modelo y escribe en /kaggle/working/{asistente,lotes,datasets,runs} con los nombres de
 siempre. Los zips se extraen en /tmp: las fotos NUNCA quedan en la salida del kernel. Probado en el host con stubs."""
-import hashlib, importlib, json, math, os, shutil, subprocess, sys, time, zipfile
+import hashlib, importlib, json, math, os, shutil, subprocess, sys, threading, time, zipfile
 from pathlib import Path
 
 ENTRADA, SALIDA, TMP = Path("/kaggle/input"), Path("/kaggle/working"), Path("/tmp/xd")
@@ -21,6 +21,7 @@ POR_GPU = {"preetiquetado-sam3": ("manifiesto.json", "tareas"), "preetiquetado-h
 MIN_PARTIR = 16                                  # con menos fotos no compensa cargar otro SAM 3 (~30 s)
 VERIFICADO = {}                                  # ruta de sam3.pt -> sha256 ya comprobado
 PESOS_VERIFICADOS = {}                           # P.4.R4: version de xd-pesos verificada entera en este envio
+PRECALENTANDO = {}                               # P.4.R5: ruta de sam3.pt -> hilo que la lee entera (cache de paginas)
 
 
 def log(*a):
@@ -51,6 +52,7 @@ def verificar_pesos(pesos_json, completo=True):
             raise RuntimeError(f"{pt.name}: {pt.stat().st_size} bytes, se esperaban {info['bytes']}")
         log(f"pesos OK: {pt} (tamano; sha verificado antes en esta version del dataset)")
         VERIFICADO[str(pt)] = info["sha256"]
+        precalentar(pt)
         return pt
     t = time.time()
     real = sha256(pt)
@@ -59,6 +61,34 @@ def verificar_pesos(pesos_json, completo=True):
     log(f"pesos OK: {pt} ({info['bytes'] / 1e9:.2f} GB, sha256 en {time.time() - t:.0f} s)")
     VERIFICADO[str(pt)] = real
     return pt
+
+
+def precalentar(pt, bloque=64 << 20):
+    """P.4.R5: lee sam3.pt entera y en orden en un hilo (mientras corre el pip) para dejarla en la cache de paginas.
+    Medido el 06/11/2026: sin el sha (que la leia asi), 2 SAM 3 cargando en frio a la vez desde /kaggle/input
+    tardaban 172-328 s; en R3, tras el sha (lectura secuencial), 33 s. Si falla, solo avisa (la carga dira lo que pase)."""
+    def leer():
+        t, n, buf = time.time(), 0, bytearray(bloque)
+        try:
+            with open(pt, "rb", buffering=0) as f:
+                while (k := f.readinto(buf)):
+                    n += k
+            log(f"pesos en memoria: {n / 1e9:.2f} GB leidos en {time.time() - t:.0f} s")
+        except OSError as e:
+            log(f"AVISO no pude precalentar {pt}: {e}")
+    h = threading.Thread(target=leer, name="precalentar", daemon=True)
+    h.start()
+    PRECALENTANDO[str(pt)] = h
+    return h
+
+
+def esperar_precalentado(pt):
+    """Antes de cargar SAM 3: termina la lectura secuencial de precalentar (si la hay)."""
+    h = PRECALENTANDO.pop(str(pt), None)
+    if h is not None and h.is_alive():
+        t = time.time()
+        h.join()
+        log(f"espere {time.time() - t:.0f} s a que sam3.pt quedara en memoria")
 
 
 def gpus():
@@ -214,7 +244,9 @@ def ejecutar(envio, zips, salida, tmp, proveedor="kaggle", sh=_sh, sam3_pt=None,
         orden = cargar_codigo(next(iter(listos.values()))[0]).ordenar([(d, s) for s, (d, _) in listos.items()])
         grupos = {cargar_codigo(d).grupo(d, s) for d, s in orden}
         if grupos - {"asistente"}:
-            sh(VISION)
+            sh(VISION)                                  # mientras, precalentar lee sam3.pt (P.4.R5)
+        if sam3_pt:
+            esperar_precalentado(sam3_pt)
         previo, asistente_listo = None, False
         n_gpus = gpus() if n_gpus is None else n_gpus
         if n_gpus > 1:

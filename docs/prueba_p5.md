@@ -38,3 +38,36 @@ encadenar el primer envio (~1 min humano), sondeo de 20 s mientras corre un envi
 - El primer daemon se detuvo antes de traerlo; un segundo daemon lo trajo e importo a las 18:36. Con el daemon
   encendido, el lote completo habria quedado revisable hacia las **16:16-16:17 (~12-13 min desde T0)**.
 - Resultado: 100 predicciones en Label Studio, 100 caches en `motor/cache_sam3/`, los 4 trabajos `importado`.
+
+## Segunda medida, con P.4.R4 (06/11/2026)
+
+Mismo hub y worker (kernels v11 y v12). Proyecto de prueba recreado (16, slug `prueba-p4`) con las mismas 100 fotos y
+sin predicciones. **Ojo:** la cache de SAM 3 de esas fotos ya estaba en `motor/cache_sam3/` (de la prueba anterior),
+asi que no hubo precodificacion; el kernel solo pre-etiqueto. Falta repetirla con la cache apartada.
+
+```
+python xd.py preetiquetar 16 --muestra 100 --trozo 16 --enviar --aplicar   # T0; el trozo 1 sale solo
+python xd.py daemon --aplicar --intervalo 1                                 # arrancado ~20 s despues
+```
+
+| Hora | Paso | R3 | R4 |
+| --- | --- | --- | --- |
+| 10:39:26 | T0 | | |
+| 10:39:40 | Exporta solo el trozo 1 (16 fotos) | 54 s (las 100) | 14 s (con la muestra) |
+| 10:40:08 | Trozo 1 en Kaggle (subida 13 s + dataset 4 s; sha de `sam3.pt` ya no se recalcula) | 2 min 58 s desde T0 | **42 s** desde T0 |
+| 10:40:08 - 10:43:55 | Kernel v11: pip 11 s; 16 fotos en 2 GPU 187 s (**carga de SAM 3 172 s**, luego ~1 s por foto) | 130 s | 3 min 47 s |
+| 10:43:55 | El daemon ve `complete` (sondeo ~25 s) | 1 min 51 s | < 30 s |
+| 10:44:10 | Traer + importar 16 predicciones | 22 s | 15 s |
+| **10:44:10** | **Trozo 1 revisable** | **6 min 51 s** | **4 min 44 s** |
+| 10:44:56 | Trozo 2 en Kaggle (lo lanza el daemon en el mismo ciclo) | | |
+| 10:44:56 - 10:52:10 | Kernel v12: 84 fotos en 2 GPU 382 s (**carga de SAM 3 328 s**, luego ~1.1 s por foto) | 195 s | 7 min 14 s |
+| **10:52:47** | **Lote completo importado** | ~12-13 min (estimado) | **13 min 21 s** (medido) |
+
+**Meta (< 5 min) cumplida para el trozo 1, sin precodificacion.** El primer clic con el calentamiento de R4 no se midio.
+
+**Hallazgo: sin el sha, la carga de SAM 3 en Kaggle se hizo mucho mas lenta** (172 s y 328 s contra 33 s en R3). El
+sha256 leia los 3.45 GB de `sam3.pt` en orden y los dejaba en la cache de paginas; sin el, los 2 procesos (uno por GPU)
+leen en frio y a la vez desde `/kaggle/input`. Arreglo **P.4.R5**: `lanzador.precalentar` lee `sam3.pt` entera y en orden
+en un hilo mientras corre el pip, y `ejecutar` la espera antes de cargar SAM 3. Si la carga vuelve a ~30 s, el trozo 1
+quedaria en ~2.5-3 min y el lote completo en ~6-7 min. Ademas, el intervalo del daemon cuenta ahora desde el inicio del
+ciclo (cada ciclo tarda 5-7 s con Kaggle; antes el "sondeo de 20 s" era de ~25-27 s).

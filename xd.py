@@ -1433,12 +1433,15 @@ def cmd_daemon(a):
         while True:
             n += 1
             print(f"\n=== ciclo {n} | {time.strftime('%Y-%m-%d %H:%M:%S')} | transporte {_transporte().nombre}")
+            t0 = time.monotonic()
             ciclo_daemon(a.aplicar)
             if a.una_vez:
                 return 0
-            espera = SONDEO_RAPIDO if _envio_en_curso() else max(1, a.intervalo) * 60
+            rapido = _envio_en_curso()
+            # P.4.R5: el intervalo cuenta desde el inicio del ciclo (el ciclo mismo tarda 5-7 s con Kaggle)
+            espera = max(0, round((SONDEO_RAPIDO if rapido else max(1, a.intervalo) * 60) - (time.monotonic() - t0)))
             print(f"daemon: siguiente ciclo en {espera // 60} min {espera % 60} s"
-                  + (" (hay un envio corriendo: sondeo rapido)" if espera == SONDEO_RAPIDO else "") + " (Ctrl+C para detener)")
+                  + (" (hay un envio corriendo: sondeo rapido)" if rapido else "") + " (Ctrl+C para detener)")
             time.sleep(espera)
     except KeyboardInterrupt:
         print("\ndaemon: detenido")

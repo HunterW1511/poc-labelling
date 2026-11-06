@@ -168,3 +168,10 @@ antes. Ademas el trozo 1 del lote y el de la precodificacion eran fotos distinta
 trozo 2 corria en Kaggle; el lote completo ~12-13 min. Superposicion real, pero **la meta (< 5 min) no se cumplio**:
 P.4 sigue abierta con P.4.R4 (exportar el trozo 1 primero, encadenar el primer envio, sondeo rapido, sha de los pesos
 sin recalcular, calentar el clic) y una nueva medida.
+
+## Segunda medida (P.4.R4, 06/11/2026): ver docs/prueba_p5.md
+
+Trozo 1 revisable a los **4 min 44 s** de T0 (meta cumplida, pero sin precodificacion: la cache ya estaba en el hub);
+lote completo importado a los 13 min 21 s. La carga de SAM 3 en Kaggle subio a 172-328 s al quitar el sha (lectura en
+frio y concurrente de `sam3.pt`): P.4.R5 la precalienta con una lectura secuencial durante el pip. P.4 sigue abierta
+hasta medir R5 con la cache apartada (con precodificacion, como en un caso real).

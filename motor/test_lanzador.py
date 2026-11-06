@@ -1,6 +1,6 @@
 """P.2.7a: lanzador.py (kernel de Kaggle) con el worker.py REAL y stubs de lote/entrenar/trabajo dentro de los zips
 (sin GPU, sin red, sin instalar nada). Uso: python test_lanzador.py"""
-import json, re, tempfile, zipfile
+import json, re, tempfile, threading, zipfile
 from pathlib import Path
 
 import lanzador as L
@@ -59,6 +59,12 @@ def test_buscar_y_verificar_pesos():
         L.VERIFICADO.clear()
         assert L.verificar_pesos(d / "pesos.json", completo=False) == d / "sam3.pt"        # P.4.R4: solo el tamano
         assert L.VERIFICADO[str(d / "sam3.pt")] == L.sha256(d / "sam3.pt")
+        assert str(d / "sam3.pt") in L.PRECALENTANDO                                  # P.4.R5: la lee en un hilo
+        L.esperar_precalentado(d / "sam3.pt")
+        assert str(d / "sam3.pt") not in L.PRECALENTANDO
+        L.esperar_precalentado(t / "no_existe.pt")                                     # sin hilo: no hace nada
+        L.precalentar(t / "no_existe.pt").join()                                       # no existe: avisa, no revienta
+        L.PRECALENTANDO.clear()
         (d / "sam3.pt").write_bytes(b"pesos_de_otro_tamano")
         try:
             L.verificar_pesos(d / "pesos.json", completo=False)
@@ -147,8 +153,14 @@ def test_dos_gpus_reparten_un_lote():
                     json.dumps({"modo": "sam3", "tareas": tareas[:3] + [{"id": 99, "foto": "fotos/1.jpg"}]}), **fotos})
         chico = _zip(zips / "lote_p1_c.zip", "preetiquetado", {"codigo/lote.py": LOTE_GPU, "manifiesto.json":
                      json.dumps({"modo": "sam3", "tareas": tareas[:2]}), **fotos})
+        h = threading.Thread(target=lambda: None)                                     # P.4.R5: precalentar en curso
+        h.start()
+        L.PRECALENTANDO[str(t / "sam3.pt")] = h
+        durante_pip = []                                                              # el pip corre mientras se lee
         est = {e["trabajo"]: e for e in L.ejecutar({"envio": "g", "trabajos": [bueno, malo, chico]}, zips, salida, tmp,
-                                                   sh=lambda c: None, sam3_pt=t / "sam3.pt", n_gpus=2, min_partir=4)}
+                                                   sh=lambda c: durante_pip.append(str(t / "sam3.pt") in L.PRECALENTANDO),
+                                                   sam3_pt=t / "sam3.pt", n_gpus=2, min_partir=4)}
+        assert durante_pip == [True] and str(t / "sam3.pt") not in L.PRECALENTANDO    # y se espera antes de SAM 3
         e = est["lote_p1_g"]
         assert e["ok"] and e["entorno"]["gpus"] == 2 and [p["fotos"] for p in e["partes"]] == [3, 3], e
         pred = json.loads((salida / "lotes" / "lote_p1_g_pred.json").read_text())["predicciones"]
