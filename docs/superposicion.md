@@ -1,6 +1,6 @@
 # P.4 Superposicion: lotes en trozos con envios escalonados
 
-Escrito al abrir P.4 (05/11/2026). Objetivo: primera tarea revisable con clic funcionando en
+Escrito al abrir P.4 (05/11/2026); **cerrada el 06/11/2026** (ver "Cierre de P.4" al final; sigue P.4.R6). Objetivo: primera tarea revisable con clic funcionando en
 menos de 5 min, incluso con lotes de cientos de fotos.
 
 ## 1. Flujo actual (punto de partida)
@@ -181,3 +181,32 @@ hasta medir R5 con la cache apartada (con precodificacion, como en un caso real)
 Trozo 1 revisable a los **4 min 24 s** con predicciones y cache (meta cumplida en el caso real); lote completo
 13 min 47 s. La carga de SAM 3 volvio a ~31 s (kernel del trozo 1: 91 s). Ahora pesa la bajada de la cache desde Kaggle
 (364 MB del trozo 2 en 4 min 51 s). Falta medir el primer clic antes de cerrar P.4.
+
+## Cierre de P.4 (06/11/2026)
+
+**P.4 cerrada: metas cumplidas en el caso real** (100 fotos nuevas, con pre-etiquetado y precodificacion en Kaggle 2 x T4):
+
+| Meta | Resultado |
+| --- | --- |
+| Primera tarea revisable en < 5 min | **4 min 24 s** (trozo 1: 16 predicciones + 16 caches) |
+| Clic funcionando al revisar | primer clic **0.2 s** con la cache del worker; SAM 3 listo en el hub en 3 s (checkpoint ligero) |
+| Superposicion | el trozo 2 corre en Kaggle mientras se revisa el trozo 1 (el daemon lo encadena) |
+
+Entregado en R1-R5: envios escalonados por trozo, trozos alineados, daemon, trozo 1 primero + `--enviar`, sondeo de
+20 s desde el inicio del ciclo, sha de `sam3.pt` solo al cambiar la version de `xd-pesos`, precalentar `sam3.pt` durante
+el pip (carga de SAM 3 en Kaggle 172-328 s -> ~31 s), clic calentado al cargar y `xd.py precalentar` reparado.
+
+## P.4.R6 (abierta): bajar la cache de Kaggle
+
+**Problema medido** (docs/prueba_p5.md, tercera medida): la cache de SAM 3 pesa ~4.3 MB por foto. La del trozo 2
+(84 fotos, 364 MB) tardo **4 min 51 s** en bajar (~1.25 MB/s), mas que su kernel (153 s); importar las 84 predicciones
+(una peticion por tarea) sumo 54 s. El lote completo quedo en 13 min 47 s; sin esa bajada habria quedado hacia los ~8 min.
+
+**Opciones** (medir las dos primeras antes de elegir):
+1. **Predicciones primero, cache despues:** traer e importar los `_pred.json` (KB) en cuanto el kernel termina y bajar
+   la cache aparte. Medir como se comporta el clic mientras la cache no llega (codifica en CPU).
+2. **Cache mas ligera** (fp16 o compresion): menos MB por foto. Toca `cache_sam3.py` y la clave de la cache (no el
+   nucleo); verificar que el clic dé las mismas mascaras y medir el costo de descomprimir en el hub.
+3. **Importar predicciones en bloque** en vez de una por tarea (parte de los 54 s).
+
+**Meta:** lote completo de 100 fotos revisable (predicciones + cache) en < 8 min sin empeorar el trozo 1 (< 5 min).
