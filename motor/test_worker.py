@@ -191,12 +191,31 @@ def test_entrenamiento_por_el_worker():
         assert e["ok"] and e["resultado"] == f"runs/{stem}", e
         assert (t / "out" / f"{stem}.estado.json").exists() and not (t / "out" / "runs").exists()
         assert YOLOFalso.visto["epochs"] == 3 and YOLOFalso.visto["imgsz"] == 640 and YOLOFalso.visto["modelo"] == "yolo11n.pt"
+        assert YOLOFalso.visto["nbs"] == YOLOFalso.visto["batch"] == 2                  # P.7 2.1: dataset chico
         assert json.loads((d / "det" / "data.yaml").read_text().splitlines()[0][6:]) == str((d / "det").resolve())
         met = json.loads((t / "runs" / stem / "weights" / "metricas.json").read_text(encoding="utf-8"))
         assert met["conteo"] == {"exactas": 1, "imagenes": 2, "tasa": 0.5} and met["proyecto"] == 4
         assert met["por_clase"]["base"]["error_abs"] == 1 and met["por_clase"]["tornillo"]["ap50"] == 0.9
         assert met["epocas_ejecutadas"] == 2 and met["dataset"] == f"{stem}.zip"
         assert registro.normalizar(met)["conteo_tasa"] == 0.5          # registrar lo acepta como siempre
+
+
+def test_ajustar_segun_el_tamano():
+    """P.7 2.1: con pocas fotos se garantizan >= 300 pasos del optimizador (sin acumular); lo explicito no se toca."""
+    base = entrenar.parametros({})
+    p, aj = entrenar.ajustar(base, 19)                       # el hijo de la prueba P.7 (antes ~15 pasos)
+    pasos = -(-19 // p["batch"]) * p["epochs"]
+    assert p["batch"] == 9 and aj["nbs"] == 9 and pasos >= entrenar.MIN_PASOS, (p, aj)
+    assert p["patience"] >= p["epochs"] * 0.3 and aj["ajustes"], aj
+    p, aj = entrenar.ajustar(base, 117)                      # el modelo final de la prueba
+    assert p["batch"] == 16 and p["epochs"] == 100 and aj["nbs"] == 16 and -(-117 // 16) * 100 >= entrenar.MIN_PASOS
+    p, aj = entrenar.ajustar(base, 2000)                     # dataset grande: los defectos de siempre
+    assert (p["batch"], p["epochs"], p["patience"], aj["nbs"]) == (16, 100, 30, None) and not aj["ajustes"], (p, aj)
+    p, aj = entrenar.ajustar(entrenar.parametros({"epochs": 5, "batch": 4, "patience": 2}), 19,
+                             explicitos={"epochs", "batch", "patience"})
+    assert (p["batch"], p["epochs"], p["patience"]) == (4, 5, 2) and aj["nbs"] == 4, (p, aj)
+    p, _ = entrenar.ajustar(base, 1)                         # tope de epocas
+    assert p["epochs"] == entrenar.MAX_EPOCHS and p["batch"] == 2
 
 
 class SAM3Falso:

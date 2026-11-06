@@ -35,6 +35,38 @@ def parametros(p=None):
     return out
 
 
+# P.7 bloque 2.1: con pocas fotos, los defectos (batch 16, nbs 64 de ultralytics) dan muy pocos pasos del optimizador.
+# Medido en la prueba P.7: 19 fotos -> 2 iteraciones por epoca, 1 paso cada 2 epocas, ~15 pasos en 31 epocas y nunca
+# salio del warmup (>= 100 iteraciones): el hijo no detecto nada. Estas reglas solo tocan lo que la persona no fijo.
+PEQUENO, DDP_MIN, MIN_PASOS, MAX_EPOCHS = 200, 100, 300, 300
+
+
+def ajustar(p, n_train, explicitos=()):
+    """Parametros segun el tamano del dataset. p: salida de parametros(); n_train: fotos de entrenamiento;
+    explicitos: claves que fijo la persona (no se tocan). -> (p ajustado, {"nbs": N | None, "ajustes": [textos]})."""
+    q, notas, nbs = dict(p), [], None
+    if n_train < PEQUENO:
+        if "batch" not in explicitos:
+            b = max(2, min(q["batch"], n_train // 2))
+            if b != q["batch"]:
+                notas.append(f"batch {q['batch']} -> {b} ({n_train} fotos)")
+                q["batch"] = b
+        nbs = q["batch"]                                   # sin acumular gradientes: un paso por iteracion
+        notas.append(f"nbs {nbs} (sin acumular)")
+    pasos_ep = max(1, -(-max(1, n_train) // q["batch"]))
+    if "epochs" not in explicitos:
+        e = min(MAX_EPOCHS, max(q["epochs"], -(-MIN_PASOS // pasos_ep)))
+        if e != q["epochs"]:
+            notas.append(f"epochs {q['epochs']} -> {e} (>= {MIN_PASOS} pasos)")
+            q["epochs"] = e
+    if "patience" not in explicitos:
+        pa = max(q["patience"], -(-q["epochs"] * 3 // 10))
+        if pa != q["patience"]:
+            notas.append(f"patience {q['patience']} -> {pa}")
+            q["patience"] = pa
+    return q, {"nbs": nbs, "ajustes": notas}
+
+
 def dispositivo(device="", gpus=None):
     """'' -> todas las GPU (P.2.8: la cuota de Kaggle cuenta horas de sesion; T4 x2 entrena en DDP) o 'cpu'.
     -> (para entrenar, para validar y predecir: siempre una sola GPU)."""
@@ -104,11 +136,20 @@ def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None, runs=
     run_n = nombre_run(stem, fmt)
     print(f"Dataset {dataset or stem} | run {run_n} | modelo {p['modelo']} | imagenes {resumen.get('imagenes')} | "
           f"correcciones {resumen.get('n_correcciones')}", flush=True)
+    explicitos = {k for k, v in (params or {}).items() if v not in (None, "")}
+    n_train = sum(1 for f in (d / fmt / "images" / "train").glob("*") if f.is_file())
+    p, aj = ajustar(p, n_train, explicitos)
     dev, dev1 = dispositivo(p["device"])
-    print(f"device: entrenar {dev} | validar {dev1}", flush=True)
+    if "," in dev and n_train < DDP_MIN and "device" not in explicitos:
+        aj["ajustes"].append(f"device {dev} -> {dev1} (pocas fotos: DDP no compensa)")
+        dev = dev1
+    print(f"device: entrenar {dev} | validar {dev1} | fotos de entrenamiento {n_train}", flush=True)
+    for x in aj["ajustes"]:
+        print(f"  ajuste: {x}", flush=True)
+    extra = {"nbs": aj["nbs"]} if aj["nbs"] else {}
     YOLO(p["modelo"]).train(data=str(yml), epochs=p["epochs"], imgsz=p["imgsz"], batch=p["batch"],
                             patience=p["patience"], plots=True, project=str(runs), name=run_n,
-                            exist_ok=True, device=dev)
+                            exist_ok=True, device=dev, **extra)
     run = runs / run_n
     best = YOLO(str(run / "weights" / "best.pt"))
     names = best.names
@@ -135,7 +176,8 @@ def entrenar(d, salida, params=None, proyecto=None, dataset="", YOLO=None, runs=
            "proyecto": proyecto, "dataset": dataset or f"{stem}.zip", "resumen_dataset": resumen, "formato": fmt,
            "modelo_base": p["modelo"], "ultralytics": ul,
            "params": {"imgsz": p["imgsz"], "epochs": p["epochs"], "patience": p["patience"], "batch": p["batch"],
-                      "conf_conteo": p["conf_conteo"], "device": dev},
+                      "conf_conteo": p["conf_conteo"], "device": dev, "nbs": aj["nbs"], "n_train": n_train,
+                      "ajustes": aj["ajustes"]},
            "epocas_ejecutadas": epocas,
            "conteo": {"exactas": exactas, "imagenes": len(imgs), "tasa": round(exactas / max(1, len(imgs)), 3)},
            "map50": round(float(m.box.map50), 4), "map50_95": round(float(m.box.map), 4), "por_clase": por_clase}
